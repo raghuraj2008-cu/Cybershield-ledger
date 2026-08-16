@@ -16,7 +16,7 @@
     <div class="flex justify-between items-center pb-4 border-b border-gray-800 mb-6">
         <div>
             <h1 class="text-2xl font-bold text-cyan-400 tracking-wider flex items-center gap-2">
-                🛡️ CYBERSHIELD LEDGER <span class="text-xs bg-cyan-950 text-cyan-400 px-2 py-1 rounded border border-cyan-800">LIVE FORENSIC SOC</span>
+                🛡️ CYBERSHIELD LEDGER <span class="text-xs bg-cyan-950 text-cyan-400 px-2 py-1 rounded border border-cyan-800">NATIONAL HACKATHON SOC</span>
             </h1>
             <p class="text-xs text-gray-400 mt-1">Autonomous AI Attack Path Reconstruction & Blockchain Evidence Anchoring</p>
         </div>
@@ -28,45 +28,65 @@
 
     <!-- Main Grid -->
     <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Attack Graph Panel (2 Cols) -->
+        <!-- Left Panel: Attack Graph & Tools -->
         <div class="lg:col-span-2 space-y-4">
             <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
                 <div class="flex justify-between items-center mb-3">
-                    <h2 class="text-sm font-semibold text-gray-200">🕸️ Real-Time Reconstructed Attack Path</h2>
+                    <h2 class="text-sm font-semibold text-gray-200">🕸️ Reconstructed Lateral Attack Topology</h2>
                     <span id="threatBadge" class="text-xs px-2 py-0.5 rounded bg-gray-800 text-gray-300">Awaiting Ingestion</span>
                 </div>
                 <div id="cy"></div>
             </div>
 
-            <!-- Tamper Verification Tool -->
+            <!-- Digital Forensic Tools -->
             <div class="bg-gray-900 border border-gray-800 rounded-lg p-4">
-                <h2 class="text-sm font-semibold text-amber-400 mb-2">⚖️ Digital Forensics & Tamper-Proof Audit</h2>
-                <p class="text-xs text-gray-400 mb-4">Validate that local database security logs match the immutable Merkle Root stored on the blockchain.</p>
-                <div class="flex gap-3">
+                <h2 class="text-sm font-semibold text-amber-400 mb-2">⚖️ Digital Forensics, DFIR & Evidence Audit</h2>
+                <p class="text-xs text-gray-400 mb-4">Validate cryptographic log integrity against blockchain or export a court-admissible DFIR incident brief.</p>
+                <div class="flex flex-wrap gap-3">
                     <button onclick="verifyIntegrity()" class="bg-cyan-600 hover:bg-cyan-500 text-white text-xs px-4 py-2 rounded font-semibold transition">
                         Run Cryptographic Integrity Check
                     </button>
                     <button onclick="tamperLogDemo()" class="bg-rose-950 hover:bg-rose-900 text-rose-300 border border-rose-800 text-xs px-4 py-2 rounded font-semibold transition">
                         Simulate Attacker Log Tampering (Demo Hack)
                     </button>
+                    <button onclick="generateReportModal()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs px-4 py-2 rounded font-semibold transition flex items-center gap-1">
+                        📄 Generate Legal DFIR Report
+                    </button>
                 </div>
                 <div id="verificationResult" class="mt-3 text-xs hidden p-3 rounded"></div>
             </div>
         </div>
 
-        <!-- Telemetry Logs & Alerts Feed (1 Col) -->
-        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col h-[560px]">
+        <!-- Telemetry Logs & Alerts Feed -->
+        <div class="bg-gray-900 border border-gray-800 rounded-lg p-4 flex flex-col h-[580px]">
             <div class="flex justify-between items-center mb-3">
-                <h2 class="text-sm font-semibold text-gray-200">🚨 Live Threat Telemetry</h2>
+                <h2 class="text-sm font-semibold text-gray-200">🚨 Real-Time Threat Telemetry</h2>
                 <span class="text-xs text-cyan-400 animate-pulse">● LIVE</span>
             </div>
-            <div id="logFeed" class="space-y-2 overflow-y-auto flex-1 text-xs pr-1">
-                <!-- Log Cards injected dynamically -->
+            <div id="logFeed" class="space-y-2 overflow-y-auto flex-1 text-xs pr-1"></div>
+        </div>
+    </div>
+
+    <!-- DFIR Report Modal -->
+    <div id="reportModal" class="fixed inset-0 bg-black/80 backdrop-blur-sm hidden flex items-center justify-center p-4 z-50">
+        <div class="bg-gray-900 border border-purple-800 rounded-lg max-w-2xl w-full p-6 space-y-4">
+            <div class="flex justify-between items-center border-b border-gray-800 pb-3">
+                <h3 class="text-base font-bold text-purple-400">📋 Certified Digital Forensics Incident Report (DFIR)</h3>
+                <button onclick="closeModal()" class="text-gray-400 hover:text-white">&times;</button>
+            </div>
+            <div id="modalBody" class="text-xs space-y-3 bg-gray-950 p-4 rounded border border-gray-800 max-h-[350px] overflow-y-auto font-mono text-gray-300">
+                Loading...
+            </div>
+            <div class="flex justify-end gap-3 pt-2">
+                <button onclick="downloadReportJson()" class="bg-purple-600 hover:bg-purple-500 text-white text-xs px-4 py-2 rounded font-semibold">Download Certified JSON</button>
+                <button onclick="closeModal()" class="bg-gray-800 hover:bg-gray-700 text-gray-300 text-xs px-4 py-2 rounded">Close</button>
             </div>
         </div>
     </div>
 
     <script>
+        let currentReport = null;
+
         const cy = cytoscape({
             container: document.getElementById('cy'),
             style: [
@@ -104,16 +124,13 @@
 
         async function fetchState() {
             try {
-                // Fetch Logs
                 const logRes = await fetch('http://127.0.0.1:8000/api/v1/logs');
                 const logs = await logRes.json();
                 
-                // Fetch Merkle Root
                 const rootRes = await fetch('http://127.0.0.1:8000/api/v1/merkle-root');
                 const rootData = await rootRes.json();
                 document.getElementById('merkleRootDisplay').innerText = rootData.merkle_root || 'None';
 
-                // Update Feed
                 const feed = document.getElementById('logFeed');
                 feed.innerHTML = '';
                 
@@ -152,7 +169,6 @@
                     });
                 });
 
-                // Update Graph Elements
                 const cyElements = [];
                 nodes.forEach(n => cyElements.push({ data: { id: n, label: n } }));
                 edges.forEach(e => cyElements.push(e));
@@ -161,7 +177,6 @@
                 cy.add(cyElements);
                 cy.layout({ name: 'breadthfirst', directed: true, padding: 30 }).run();
 
-                // Update Threat Badge
                 const badge = document.getElementById('threatBadge');
                 if (maxThreat >= 80) {
                     badge.innerText = `CRITICAL THREAT: ${maxThreat}%`;
@@ -188,6 +203,43 @@
             res.classList.remove('hidden');
             res.className = "mt-3 text-xs p-3 rounded border border-rose-800 bg-rose-950/80 text-rose-200";
             res.innerHTML = "🚨 <b>TAMPER DETECTED:</b> Database hash mismatch on Event #4 (`PRIVILEGE_ESCALATION`). Evidence rejected by blockchain consensus!";
+        }
+
+        async function generateReportModal() {
+            const modal = document.getElementById('reportModal');
+            const body = document.getElementById('modalBody');
+            modal.classList.remove('hidden');
+            body.innerHTML = "Generating forensic summary...";
+            
+            try {
+                const res = await fetch('http://127.0.0.1:8000/api/v1/forensic-report');
+                currentReport = await res.json();
+                body.innerHTML = `
+                    <div class="text-cyan-400 font-bold text-sm mb-2">CASE ID: ${currentReport.report_id}</div>
+                    <div><b>Classification:</b> ${currentReport.case_classification}</div>
+                    <div><b>Max Threat:</b> ${currentReport.max_threat_score}</div>
+                    <div><b>On-Chain Merkle Root:</b> <span class="text-emerald-400">${currentReport.chain_of_custody.on_chain_merkle_root}</span></div>
+                    <div class="mt-2 text-gray-300"><b>Executive Brief:</b><br>${currentReport.executive_summary}</div>
+                    <div class="mt-2 text-amber-300"><b>Recommended SOAR Actions:</b><br>• ${currentReport.recommended_containment_actions.join('<br>• ')}</div>
+                `;
+            } catch(e) {
+                body.innerText = "Error loading report: " + e;
+            }
+        }
+
+        function downloadReportJson() {
+            if (!currentReport) return;
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(currentReport, null, 2));
+            const downloadAnchor = document.createElement('a');
+            downloadAnchor.setAttribute("href", dataStr);
+            downloadAnchor.setAttribute("download", `${currentReport.report_id}.json`);
+            document.body.appendChild(downloadAnchor);
+            downloadAnchor.click();
+            downloadAnchor.remove();
+        }
+
+        function closeModal() {
+            document.getElementById('reportModal').classList.add('hidden');
         }
 
         setInterval(fetchState, 2000);
