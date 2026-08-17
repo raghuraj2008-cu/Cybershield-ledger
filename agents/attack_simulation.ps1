@@ -1,4 +1,4 @@
-﻿$BackendUrl = "http://127.0.0.1:8000/api/v1/ingest"
+$BackendUrl = "http://127.0.0.1:8000/api/v1/ingest"
 
 $attackSteps = @(
     @{ user = "guest_user"; event = "AUTH_FAILURE"; process = "sshd.exe"; msg = "SSH Port 22 Brute-force attempt" },
@@ -23,7 +23,6 @@ foreach ($step in $attackSteps) {
     } | ConvertTo-Json
 
     $response = Invoke-RestMethod -Uri $BackendUrl -Method Post -Body $payload -ContentType "application/json"
-    
     Write-Host "[$($step.event)] Threat Score: $($response.threat_score)% | MITRE Tactic: $($response.mitre_tactic)" -ForegroundColor Yellow
     Start-Sleep -Seconds 1
 }

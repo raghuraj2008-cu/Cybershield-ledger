@@ -1,4 +1,4 @@
-﻿class ThreatDetector:
+class ThreatDetector:
     def __init__(self):
         self.failure_history = {}
 
@@ -10,7 +10,6 @@
         self.failure_history[user_clean] = self.failure_history.get(user_clean, 0) + is_failure
         attempts = self.failure_history[user_clean]
 
-        # Multi-Vector Threat Evaluation
         if "EXFILTRATION" in event_clean:
             score = 98
             mitre_tactic = "TA0010 - Exfiltration (Data Stolen)"

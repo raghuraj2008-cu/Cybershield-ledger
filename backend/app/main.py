@@ -1,4 +1,4 @@
-﻿from fastapi import FastAPI
+from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 import json
@@ -37,7 +37,6 @@ def ingest_log(log: SecurityLog):
     log_entry = log.model_dump()
     log_entry.update(ai_result)
     log_entry["log_hash"] = MerkleTree.hash_str(json.dumps(log_entry, sort_keys=True))
-    
     log_database.append(log_entry)
     
     return {
@@ -59,7 +58,6 @@ def get_merkle_root():
 
 @app.get("/api/v1/forensic-report")
 def generate_forensic_report():
-    """GenAI/Forensic Copilot: Produces a certified Incident Response & Legal FIR brief."""
     if not log_database:
         return {"error": "No telemetry recorded to generate report."}
     
@@ -68,7 +66,7 @@ def generate_forensic_report():
     max_threat = max(log["threat_score"] for log in log_database)
     tactics = list(set(log["mitre_tactic"] for log in log_database if log["threat_score"] >= 50))
     
-    report = {
+    return {
         "report_id": f"DFIR-{int(datetime.utcnow().timestamp())}",
         "timestamp_utc": datetime.utcnow().isoformat() + "Z",
         "case_classification": "CRITICAL INCIDENT / APT EXFILTRATION" if max_threat >= 90 else "SUSPICIOUS ACTIVITY",
@@ -80,17 +78,11 @@ def generate_forensic_report():
         },
         "compromised_assets": list(set([log["source_host"] for log in log_database] + [log["target_host"] for log in log_database])),
         "observed_mitre_tactics": tactics,
-        "executive_summary": (
-            f"Automated forensics detected a multi-stage lateral compromise culminating in a "
-            f"maximum severity threat score of {max_threat}%. The attacker gained initial access via "
-            f"credential spraying and escalated privileges to SYSTEM. Critical evidence was continuously hashed "
-            f"and anchored to the permissioned ledger with Root {root[:16]}..."
-        ),
+        "executive_summary": f"Automated forensics detected a multi-stage compromise with maximum threat score {max_threat}%. Logs anchored with Merkle Root {root[:16]}...",
         "recommended_containment_actions": [
-            "Isolate network adapter on host PC-17 via PowerShell SOAR command.",
-            "Revoke Active Directory token for admin_svc and rotate Kerberos TGT.",
-            "Block outbound egress traffic to external IP 198.51.100.42.",
-            "Submit on-chain Merkle root to CERT-In / legal authorities as untampered evidence."
+            "Isolate host network adapter on PC-17 via SOAR command.",
+            "Revoke Active Directory token for admin_svc.",
+            "Block outbound exfiltration traffic to external IP 198.51.100.42.",
+            "Submit on-chain Merkle root to CERT-In / legal authorities."
         ]
     }
-    return report
