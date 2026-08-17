@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  backend:
+    build: ./backend
+    container_name: cybershield-backend
+    ports:
+      - "8000:8000"
+    environment:
+      - SEVERITY_THRESHOLD=90
+    restart: always
+
+  frontend:
+    image: nginx:alpine
+    container_name: cybershield-frontend
+    volumes:
+      - ./frontend:/usr/share/nginx/html
+    ports:
+      - "3000:80"
+    depends_on:
+      - backend
