@@ -1,4 +1,4 @@
-[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
+﻿[Console]::OutputEncoding = [System.Text.Encoding]::UTF8
 $OutputEncoding = [System.Text.Encoding]::UTF8
 
 $BackendUrl = "http://127.0.0.1:8000/api/v1/logs"
@@ -32,13 +32,13 @@ while ($true) {
                 
                 if (-not $quarantinedHosts.ContainsKey($srcHost)) {
                     $quarantinedHosts[$srcHost] = $true
-                    Write-Host "   ⚡ [SOAR ACTION 1] Enforcing host quarantine: Inbound/Outbound isolation applied to '$srcHost'" -ForegroundColor Red
+                    Write-Host "   ⚡ [SOAR ACTION 1] Enforcing host quarantine: Inbound/Outbound isolation applied to host: $srcHost" -ForegroundColor Red
                 } else {
-                    Write-Host "   🔒 [SOAR STATUS] Host '$srcHost' is already under active quarantine policy" -ForegroundColor DarkGray
+                    Write-Host "   🔒 [SOAR STATUS] Host is already under active quarantine policy: $srcHost" -ForegroundColor DarkGray
                 }
                 
                 Write-Host "   ⚡ [SOAR ACTION 2] Injecting decoy honeytoken credentials into LSASS memory space..." -ForegroundColor Cyan
-                Write-Host "   ⚡ [SOAR ACTION 3] Broadcasted token revocation for account: '$user'" -ForegroundColor Green
+                Write-Host "   ⚡ [SOAR ACTION 3] Broadcasted token revocation for account: $user" -ForegroundColor Green
                 Write-Host ""
             }
         }
