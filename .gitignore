@@ -1,19 +1,6 @@
-# Virtual Environments
-venv/
+﻿venv/
 env/
-ENV/
-
-# Python cache
 __pycache__/
 *.pyc
-*.pyo
-
-# Node dependencies
 node_modules/
-dist/
-.next/
-
-# IDE files
 .vscode/
-.idea/
-*.log
