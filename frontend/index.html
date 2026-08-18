@@ -1,4 +1,4 @@
-<!DOCTYPE html>
+﻿<!DOCTYPE html>
 <html lang="en" class="dark">
 <head>
     <meta charset="UTF-8">
@@ -6,7 +6,6 @@
     <title>CyberShield Ledger - Enterprise SOC Platform</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/crypto-js/4.2.0/crypto-js.min.js"></script>
     <style>
         body { background-color: #0b0f19; font-family: 'Inter', system-ui, sans-serif; }
         #cy { width: 100%; height: 380px; }
@@ -31,7 +30,7 @@
         </div>
         <div class="bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 text-right w-full md:w-auto">
             <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Verified On-Chain Merkle Root</div>
-            <div id="merkle-root-display" class="font-mono text-xs text-emerald-400 mt-0.5 truncate max-w-xs md:max-w-md">Synchronizing...</div>
+            <div id="merkle-root-display" class="font-mono text-xs text-emerald-400 mt-0.5 truncate max-w-xs md:max-w-md">0000000000000000...</div>
         </div>
     </header>
 
@@ -77,7 +76,6 @@
     </main>
 
     <script>
-        let logsCache = [];
         let cy = cytoscape({
             container: document.getElementById('cy'),
             style: [
@@ -88,10 +86,10 @@
                         'color': '#f8fafc',
                         'background-color': '#0284c7',
                         'text-valign': 'center',
-                        'font-size': '11px',
+                        'font-size': '10px',
                         'font-weight': 'bold',
-                        'width': 65,
-                        'height': 65,
+                        'width': 60,
+                        'height': 60,
                         'border-width': 2,
                         'border-color': '#38bdf8'
                     }
@@ -116,41 +114,46 @@
                         'color': '#fda4af',
                         'font-size': '9px',
                         'text-background-color': '#0f172a',
-                        'text-background-opacity': 0.85,
+                        'text-background-opacity': 0.9,
                         'text-background-padding': '3px'
                     }
                 }
             ],
-            layout: { name: 'circle', padding: 30 }
+            layout: { name: 'circle', padding: 25 }
         });
 
         async function updateTelemetry() {
             try {
                 const res = await fetch('http://127.0.0.1:8000/api/v1/logs');
+                if (!res.ok) return;
                 const logs = await res.json();
-                logsCache = logs;
 
-                // Update Merkle Root
                 const rootRes = await fetch('http://127.0.0.1:8000/api/v1/merkle-root');
-                const rootData = await rootRes.json();
-                document.getElementById('merkle-root-display').innerText = rootData.merkle_root || 'N/A';
+                if (rootRes.ok) {
+                    const rootData = await rootRes.json();
+                    document.getElementById('merkle-root-display').innerText = rootData.merkle_root || 'N/A';
+                }
 
                 // Render Logs List
                 const container = document.getElementById('logs-container');
                 if (logs.length > 0) {
-                    container.innerHTML = logs.slice().reverse().map(log => `
-                        <div class="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 hover:border-slate-700 transition">
-                            <div class="flex justify-between items-center mb-1">
-                                <span class="font-bold text-slate-200">${log.event_type}</span>
-                                <span class="px-2 py-0.5 rounded text-[10px] font-bold ${log.threat_score >= 90 ? 'bg-rose-500/20 text-rose-400 border border-rose-500/30' : log.threat_score >= 70 ? 'bg-amber-500/20 text-amber-400 border border-amber-500/30' : 'bg-blue-500/20 text-blue-400 border border-blue-500/30'}">${log.threat_score}%</span>
+                    container.innerHTML = logs.slice().reverse().map(log => {
+                        const hashDisplay = log.leaf_hash ? `${log.leaf_hash.substring(0, 18)}...` : 'N/A';
+                        const badgeColor = log.threat_score >= 90 ? 'bg-rose-500/20 text-rose-400 border-rose-500/30' : log.threat_score >= 70 ? 'bg-amber-500/20 text-amber-400 border-amber-500/30' : 'bg-emerald-500/20 text-emerald-400 border-emerald-500/30';
+                        return `
+                            <div class="p-3 rounded-xl bg-slate-950/80 border border-slate-800/80 hover:border-slate-700 transition">
+                                <div class="flex justify-between items-center mb-1">
+                                    <span class="font-bold text-slate-200">${log.event_type}</span>
+                                    <span class="px-2 py-0.5 rounded text-[10px] font-bold border ${badgeColor}">${log.threat_score}%</span>
+                                </div>
+                                <div class="text-slate-400 text-[11px]">${log.mitre_tactic}</div>
+                                <div class="text-slate-500 text-[10px] font-mono mt-1">Hash: ${hashDisplay}</div>
                             </div>
-                            <div class="text-slate-400 text-[11px]">${log.mitre_tactic}</div>
-                            <div class="text-slate-500 text-[10px] truncate mt-1">Hash: ${log.leaf_hash}</div>
-                        </div>
-                    `).join('');
+                        `;
+                    }).join('');
                 }
 
-                // Update Network Topology Graph with edge aggregation
+                // Node & Edge Graph Construction
                 let maxThreat = 0;
                 const nodeMap = new Map();
                 const edgeMap = new Map();
@@ -185,25 +188,28 @@
                     }
                 });
 
-                const elements = [];
-                nodeMap.forEach(node => elements.push({ data: node }));
-                edgeMap.forEach(edge => {
-                    elements.push({
-                        data: {
-                            id: edge.id,
-                            source: edge.source,
-                            target: edge.target,
-                            weight: Math.min(8, 2 + edge.count),
-                            label: `${edge.count}x (${edge.highestScore}% - ${edge.latestTactic.split(' - ')[0]})`
-                        }
+                if (nodeMap.size > 0) {
+                    const elements = [];
+                    nodeMap.forEach(node => elements.push({ data: node }));
+                    edgeMap.forEach(edge => {
+                        const tacticCode = (edge.latestTactic.split(' - ')[0] || '').trim();
+                        elements.push({
+                            data: {
+                                id: edge.id,
+                                source: edge.source,
+                                target: edge.target,
+                                weight: Math.min(6, 2 + edge.count),
+                                label: `${edge.highestScore}% (${tacticCode})`
+                            }
+                        });
                     });
-                });
 
-                cy.elements().remove();
-                cy.add(elements);
-                cy.layout({ name: 'concentric', minNodeSpacing: 60, padding: 30 }).run();
+                    cy.elements().remove();
+                    cy.add(elements);
+                    cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.25, padding: 30 }).run();
+                }
 
-                // Update Threat Level & SOAR Badge
+                // Threat Indicators
                 const threatEl = document.getElementById('threat-indicator');
                 const soarEl = document.getElementById('soar-status');
                 if (maxThreat >= 90) {
@@ -216,7 +222,7 @@
                     threatEl.innerText = `ELEVATED THREAT: ${maxThreat}%`;
                     soarEl.className = 'px-2.5 py-1 text-xs font-bold rounded-md bg-amber-500/20 text-amber-400 border border-amber-500/40';
                     soarEl.innerText = 'SOAR: HIGH ALERT';
-                } else {
+                } else if (maxThreat > 0) {
                     threatEl.className = 'px-3 py-1 text-xs font-bold rounded-lg bg-emerald-950/80 text-emerald-400 border border-emerald-800/40';
                     threatEl.innerText = `SYSTEM NOMINAL (${maxThreat}%)`;
                     soarEl.className = 'px-2.5 py-1 text-xs font-bold rounded-md bg-slate-800 text-slate-400 border border-slate-700';
@@ -224,7 +230,7 @@
                 }
 
             } catch (err) {
-                console.error("Telemetry fetch failed:", err);
+                console.error("Telemetry fetch error:", err);
             }
         }
 
@@ -232,7 +238,7 @@
             const auditEl = document.getElementById('audit-result');
             try {
                 const res = await fetch('http://127.0.0.1:8000/api/v1/merkle-root');
-                const data = await rootRes = await res.json();
+                const data = await res.json();
                 auditEl.className = 'p-3 rounded-lg text-xs font-mono border bg-emerald-950/40 border-emerald-500/40 text-emerald-300 block';
                 auditEl.innerHTML = `✅ <strong>CRYPTOGRAPHIC AUDIT PASSED:</strong> Verified ${data.total_events} ingested event leaves against On-Chain Merkle Root <code>${data.merkle_root.substring(0, 16)}...</code>. Zero evidence alteration detected.`;
             } catch (e) {
@@ -247,18 +253,11 @@
             auditEl.innerHTML = `🚨 <strong>INTEGRITY BREACH DETECTED:</strong> Simulated log alteration at index [2]. Computed Hash Mismatch: Expected Root <code>3ce4291...</code> != Actual <code>99a0b12...</code>. Evidence tamper flagged for SecOps inspection.`;
         }
 
-        async function generateReport() {
-            const res = await fetch('http://127.0.0.1:8000/api/v1/generate-report');
-            const data = await res.json();
-            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
-            const url = URL.createObjectURL(blob);
-            const a = document.createElement('a');
-            a.href = url;
-            a.download = `DFIR_Legal_Evidence_${Date.now()}.json`;
-            a.click();
+        function generateReport() {
+            window.open('http://127.0.0.1:8000/api/v1/generate-report', '_blank');
         }
 
-        setInterval(updateTelemetry, 2500);
+        setInterval(updateTelemetry, 2000);
         updateTelemetry();
     </script>
 </body>
