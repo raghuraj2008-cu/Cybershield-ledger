@@ -1,15 +1,20 @@
 ﻿import hashlib
 import json
+import uuid
 from datetime import datetime
 from fastapi import APIRouter
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 
 router = APIRouter()
 
-# In-memory storage for active telemetry & Merkle chain
 telemetry_logs = []
+deception_canaries = [
+    {"canary_id": "CNRY-LSASS-901", "type": "Memory Honeytoken", "account": "svc_ad_sync", "host": "DC-PRIMARY", "status": "ARMED", "tripped_at": None},
+    {"canary_id": "CNRY-SMB-902", "type": "Decoy SMB Share", "account": "\\\\DC-PRIMARY\\FinanceShare$", "host": "DC-PRIMARY", "status": "ARMED", "tripped_at": None},
+    {"canary_id": "CNRY-SQL-903", "type": "Decoy Database Table", "account": "BACKUP-DB.sys_vault", "host": "BACKUP-DB", "status": "ARMED", "tripped_at": None}
+]
 
 class TelemetryEvent(BaseModel):
     event_id: str
@@ -49,12 +54,17 @@ async def ingest_event(event: TelemetryEvent):
     event_dict = event.dict()
     leaf_hash = compute_leaf(event_dict)
     event_dict["leaf_hash"] = leaf_hash
-    
     telemetry_logs.append(event_dict)
+    
+    # Trip canaries automatically if critical threat targets DC or DB
+    if event.threat_score >= 90:
+        for c in deception_canaries:
+            if c["host"] in [event.source_host, event.target_host] and c["status"] == "ARMED":
+                c["status"] = "TRIPPED_BY_APT"
+                c["tripped_at"] = event.timestamp
     
     all_leaves = [log["leaf_hash"] for log in telemetry_logs]
     current_root = compute_merkle_root(all_leaves)
-    
     return {
         "status": "INGESTED_AND_ANCHORED",
         "event_id": event.event_id,
@@ -77,10 +87,102 @@ async def get_merkle_root():
         "status": "CONSENSUS_VERIFIED"
     }
 
+@router.get("/deception/canaries")
+async def get_canaries():
+    return deception_canaries
+
+@router.get("/analytics/blast-radius")
+async def get_blast_radius():
+    all_hosts = set()
+    compromised_hosts = set()
+    for log in telemetry_logs:
+        all_hosts.add(log["source_host"])
+        all_hosts.add(log["target_host"])
+        if log["threat_score"] >= 80:
+            compromised_hosts.add(log["source_host"])
+            compromised_hosts.add(log["target_host"])
+            
+    total_count = max(len(all_hosts), 6)
+    compromised_count = len(compromised_hosts)
+    exposure_percentage = round((compromised_count / total_count) * 100, 1) if total_count > 0 else 0
+    
+    return {
+        "total_entities_evaluated": total_count,
+        "compromised_entities": list(compromised_hosts),
+        "enterprise_blast_radius_pct": exposure_percentage,
+        "critical_crown_jewel_status": "AT_IMMINENT_RISK" if exposure_percentage >= 50 else "CONTAINED",
+        "shortest_critical_path": ["EXT-WAN-198.51.100.24", "WEB-DMZ-01", "APP-SRV-02", "DC-PRIMARY", "BACKUP-DB", "C2-DROP-AWS-S3"]
+    }
+
+@router.get("/export/stix", response_class=JSONResponse)
+async def export_stix21():
+    bundle_id = f"bundle--{uuid.uuid4()}"
+    stix_objects = []
+    
+    # 1. Threat Actor Object
+    actor_id = f"threat-actor--{uuid.uuid4()}"
+    stix_objects.append({
+        "type": "threat-actor",
+        "spec_version": "2.1",
+        "id": actor_id,
+        "created": datetime.utcnow().isoformat() + "Z",
+        "modified": datetime.utcnow().isoformat() + "Z",
+        "name": "APT-NationState-Lateral-Actor",
+        "threat_actor_types": ["nation-state", "advanced-persistent-threat"],
+        "sophistication": "advanced",
+        "resource_level": "government"
+    })
+    
+    # 2. Indicators & Attack Patterns from Telemetry
+    for log in telemetry_logs:
+        indicator_id = f"indicator--{uuid.uuid4()}"
+        pattern_id = f"attack-pattern--{uuid.uuid4()}"
+        
+        stix_objects.append({
+            "type": "attack-pattern",
+            "spec_version": "2.1",
+            "id": pattern_id,
+            "created": datetime.utcnow().isoformat() + "Z",
+            "modified": datetime.utcnow().isoformat() + "Z",
+            "name": log["event_type"],
+            "description": log["mitre_tactic"],
+            "external_references": [{
+                "source_name": "mitre-attack",
+                "external_id": log["mitre_tactic"].split(" - ")[0] if " - " in log["mitre_tactic"] else "TA0001"
+            }]
+        })
+        
+        stix_objects.append({
+            "type": "indicator",
+            "spec_version": "2.1",
+            "id": indicator_id,
+            "created": datetime.utcnow().isoformat() + "Z",
+            "modified": datetime.utcnow().isoformat() + "Z",
+            "name": f"Adversary Trajectory: {log['source_host']} -> {log['target_host']}",
+            "pattern_type": "stix",
+            "pattern": f"[network-traffic:src_ref.value = '{log['source_host']}' AND network-traffic:dst_ref.value = '{log['target_host']}']",
+            "valid_from": log["timestamp"],
+            "custom_properties": {
+                "x_sha256_leaf_digest": log.get("leaf_hash", ""),
+                "x_threat_score": log["threat_score"]
+            }
+        })
+
+    stix_bundle = {
+        "type": "bundle",
+        "id": bundle_id,
+        "spec_version": "2.1",
+        "objects": stix_objects
+    }
+    return stix_bundle
+
 @router.post("/clear")
 async def clear_logs():
-    global telemetry_logs
+    global telemetry_logs, deception_canaries
     telemetry_logs = []
+    for c in deception_canaries:
+        c["status"] = "ARMED"
+        c["tripped_at"] = None
     return {"status": "CLEARED"}
 
 @router.get("/generate-report", response_class=HTMLResponse)
@@ -118,12 +220,6 @@ async def generate_legal_dfir_report():
             table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
             th {{ background: #0f172a; padding: 12px 10px; text-align: left; color: #94a3b8; border-bottom: 2px solid #334155; }}
             .seal {{ display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; color: #10b981; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 12px; }}
-            @media print {{
-                body {{ background: #fff; color: #000; padding: 0; }}
-                .card {{ background: #fff; border: none; color: #000; }}
-                .root-box {{ background: #f1f5f9; color: #0f172a; border-color: #cbd5e1; }}
-                th {{ background: #f8fafc; color: #334155; }}
-            }}
         </style>
     </head>
     <body>
@@ -161,10 +257,6 @@ async def generate_legal_dfir_report():
                     {rows if rows else '<tr><td colspan="6" style="padding:15px; text-align:center; color:#94a3b8;">No events recorded.</td></tr>'}
                 </tbody>
             </table>
-
-            <div style="margin-top: 30px; font-size: 11px; color: #64748b; border-top: 1px solid #334155; padding-top: 15px;">
-                Forensic certificate validated against EVM smart contract anchor <code>EvidenceLedger.sol</code>. Tamper proofs verified under NIST SP 800-86 digital evidence preservation standards.
-            </div>
         </div>
     </body>
     </html>

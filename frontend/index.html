@@ -3,70 +3,88 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>CyberShield Ledger - Enterprise SOC Platform</title>
+    <title>CyberShield Ledger - National Defense SOC</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/cytoscape/3.28.1/cytoscape.min.js"></script>
     <style>
-        body { background-color: #0b0f19; font-family: 'Inter', system-ui, sans-serif; }
-        #cy { width: 100%; height: 380px; }
+        body { background-color: #080c14; font-family: 'Inter', system-ui, sans-serif; }
+        #cy { width: 100%; height: 350px; }
         .custom-scroll::-webkit-scrollbar { width: 6px; }
         .custom-scroll::-webkit-scrollbar-track { background: #0f172a; }
         .custom-scroll::-webkit-scrollbar-thumb { background: #334155; border-radius: 3px; }
     </style>
 </head>
 <body class="text-slate-100 min-h-screen p-6">
-    <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-6 border-b border-slate-800 gap-4">
+    <header class="flex flex-col md:flex-row justify-between items-start md:items-center pb-5 border-b border-slate-800 gap-4">
         <div class="flex items-center space-x-3">
-            <div class="p-3 bg-blue-600/20 border border-blue-500/40 rounded-xl">
-                <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
+            <div class="p-3 bg-indigo-600/20 border border-indigo-500/40 rounded-xl shadow-lg shadow-indigo-600/20">
+                <svg class="w-8 h-8 text-indigo-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 12l2 2 4-4m5.618-4.016A11.955 11.955 0 0112 2.944a11.955 11.955 0 01-8.618 3.04A12.02 12.02 0 003 9c0 5.591 3.824 10.29 9 11.622 5.176-1.332 9-6.03 9-11.622 0-1.042-.133-2.052-.382-3.016z"></path></svg>
             </div>
             <div>
                 <div class="flex items-center space-x-2">
-                    <h1 class="text-2xl font-bold tracking-tight bg-gradient-to-r from-blue-400 to-indigo-300 bg-clip-text text-transparent">CYBERSHIELD ENTERPRISE EDR</h1>
-                    <span class="px-2.5 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full">REAL-TIME AGENTS</span>
+                    <h1 class="text-2xl font-bold tracking-tight bg-gradient-to-r from-blue-400 via-indigo-300 to-purple-400 bg-clip-text text-transparent">CYBERSHIELD ENTERPRISE EDR 2.0</h1>
+                    <span class="px-2.5 py-0.5 text-xs font-semibold bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 rounded-full">DEFENSE GRADE</span>
                 </div>
-                <p class="text-xs text-slate-400 mt-0.5">Autonomous Zero-Trust Telemetry & Cryptographic Blockchain Evidence Anchoring</p>
+                <p class="text-xs text-slate-400 mt-0.5">Autonomous APT Lateral Reconstruction, Deception Honeytokens & On-Chain Proofs</p>
             </div>
         </div>
-        <div class="bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2.5 text-right w-full md:w-auto">
-            <div class="text-[11px] uppercase tracking-wider text-slate-400 font-semibold">Verified On-Chain Merkle Root</div>
-            <div id="merkle-root-display" class="font-mono text-xs text-emerald-400 mt-0.5 truncate max-w-xs md:max-w-md">0000000000000000...</div>
+        <div class="flex flex-wrap items-center gap-3">
+            <div class="bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2 text-right">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Blast Radius Risk</div>
+                <div id="blast-radius-display" class="font-bold text-sm text-rose-400">0.0% EXPOSURE</div>
+            </div>
+            <div class="bg-slate-900/90 border border-slate-800 rounded-xl px-4 py-2 text-right">
+                <div class="text-[10px] uppercase tracking-wider text-slate-400 font-semibold">Verified On-Chain Merkle Root</div>
+                <div id="merkle-root-display" class="font-mono text-xs text-emerald-400 truncate max-w-[200px] md:max-w-xs">0000000000000000...</div>
+            </div>
         </div>
     </header>
 
     <main class="grid grid-cols-1 lg:grid-cols-3 gap-6 mt-6">
-        <!-- Attack Topology & Audit Actions -->
+        <!-- Attack Topology & Intelligence Actions -->
         <section class="lg:col-span-2 space-y-6">
-            <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-sm">
-                <div class="flex justify-between items-center mb-4">
+            <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 backdrop-blur-sm shadow-xl">
+                <div class="flex justify-between items-center mb-3">
                     <div class="flex items-center space-x-2">
                         <span class="w-2.5 h-2.5 rounded-full bg-indigo-500 animate-pulse"></span>
                         <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">Live Lateral Attack Graph Topology</h2>
                     </div>
                     <div id="threat-indicator" class="px-3 py-1 text-xs font-bold rounded-lg bg-emerald-950/80 text-emerald-400 border border-emerald-800/40">SYSTEM NOMINAL (0%)</div>
                 </div>
-                <div id="cy" class="border border-slate-800/80 rounded-xl bg-slate-950/60"></div>
+                <div id="cy" class="border border-slate-800/80 rounded-xl bg-slate-950/70"></div>
             </div>
 
+            <!-- Active Deception Honeytoken Grid -->
+            <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-3">
+                <div class="flex justify-between items-center">
+                    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">🍯 Active Deception & Honeytoken Grid</h2>
+                    <span id="deception-status" class="px-2.5 py-0.5 text-xs font-bold rounded bg-amber-500/20 text-amber-300 border border-amber-500/30">DECEPTION ARMED</span>
+                </div>
+                <div id="canary-list" class="grid grid-cols-1 md:grid-cols-3 gap-3 text-xs">
+                    <!-- Dynamic Canary Cards -->
+                </div>
+            </div>
+
+            <!-- Cryptographic DFIR & Threat Intel Interoperability -->
             <div class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 space-y-4">
                 <div class="flex justify-between items-center">
-                    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">⚖️ Cryptographic Evidence & DFIR Audit</h2>
+                    <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">⚖️ Cryptographic DFIR & Threat Intel Interoperability</h2>
                     <span id="soar-status" class="px-2.5 py-1 text-xs font-bold rounded-md bg-slate-800 text-slate-400 border border-slate-700">SOAR: STANDBY</span>
                 </div>
-                <p class="text-xs text-slate-400">Validate real-time SHA-256 telemetry chains against Ethereum smart contract roots or export court-admissible forensic briefs.</p>
                 <div class="flex flex-wrap gap-3">
-                    <button onclick="runAudit()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition shadow-lg shadow-blue-600/20">Run Cryptographic Audit</button>
-                    <button onclick="tamperLogs()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 transition">Simulate Attacker Log Tampering</button>
-                    <button onclick="generateReport()" class="px-4 py-2 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition shadow-lg shadow-purple-600/20">📄 Export Legal DFIR Incident Brief</button>
+                    <button onclick="runAudit()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-blue-600 hover:bg-blue-500 text-white transition shadow-md shadow-blue-600/20">Run Cryptographic Audit</button>
+                    <button onclick="tamperLogs()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-rose-600/20 hover:bg-rose-600/30 text-rose-300 border border-rose-500/40 transition">Simulate Attacker Tampering</button>
+                    <button onclick="generateReport()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-purple-600 hover:bg-purple-500 text-white transition shadow-md shadow-purple-600/20">📄 Export Legal DFIR Brief</button>
+                    <button onclick="exportStix()" class="px-3.5 py-2 text-xs font-semibold rounded-lg bg-emerald-600 hover:bg-emerald-500 text-white transition shadow-md shadow-emerald-600/20">🌐 Export STIX 2.1 Bundle</button>
                 </div>
                 <div id="audit-result" class="hidden p-3 rounded-lg text-xs font-mono border"></div>
             </div>
         </section>
 
         <!-- Live Telemetry Stream -->
-        <section class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex flex-col h-[740px]">
+        <section class="bg-slate-900/80 border border-slate-800 rounded-2xl p-5 flex flex-col h-[780px]">
             <div class="flex justify-between items-center pb-3 border-b border-slate-800 mb-3">
-                <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">🚨 Real-Time Telemetry Feed</h2>
+                <h2 class="text-sm font-semibold tracking-wide uppercase text-slate-300">🚨 Telemetry Event Stream</h2>
                 <span class="flex items-center text-[11px] font-medium text-emerald-400"><span class="w-2 h-2 rounded-full bg-emerald-500 animate-ping mr-1.5"></span>LIVE</span>
             </div>
             <div id="logs-container" class="flex-1 overflow-y-auto custom-scroll space-y-2.5 pr-1 text-xs">
@@ -119,7 +137,7 @@
                     }
                 }
             ],
-            layout: { name: 'circle', padding: 25 }
+            layout: { name: 'breadthfirst', directed: true, spacingFactor: 1.25, padding: 25 }
         });
 
         async function updateTelemetry() {
@@ -128,13 +146,35 @@
                 if (!res.ok) return;
                 const logs = await res.json();
 
+                // 1. Merkle Root
                 const rootRes = await fetch('http://127.0.0.1:8000/api/v1/merkle-root');
                 if (rootRes.ok) {
                     const rootData = await rootRes.json();
                     document.getElementById('merkle-root-display').innerText = rootData.merkle_root || 'N/A';
                 }
 
-                // Render Logs List
+                // 2. Blast Radius Analytics
+                const blastRes = await fetch('http://127.0.0.1:8000/api/v1/analytics/blast-radius');
+                if (blastRes.ok) {
+                    const blastData = await blastRes.json();
+                    document.getElementById('blast-radius-display').innerText = `${blastData.enterprise_blast_radius_pct}% EXPOSURE`;
+                }
+
+                // 3. Deception Honeytokens
+                const canaryRes = await fetch('http://127.0.0.1:8000/api/v1/deception/canaries');
+                if (canaryRes.ok) {
+                    const canaries = await canaryRes.json();
+                    const canaryContainer = document.getElementById('canary-list');
+                    canaryContainer.innerHTML = canaries.map(c => `
+                        <div class="p-2.5 rounded-xl border ${c.status.includes('TRIPPED') ? 'bg-rose-950/40 border-rose-500/50 text-rose-300' : 'bg-slate-950/70 border-slate-800 text-slate-300'}">
+                            <div class="font-bold truncate">${c.canary_id}</div>
+                            <div class="text-[11px] text-slate-400 truncate">${c.type}</div>
+                            <div class="mt-1 font-mono text-[10px] ${c.status.includes('TRIPPED') ? 'text-rose-400 font-bold animate-pulse' : 'text-emerald-400'}">${c.status}</div>
+                        </div>
+                    `).join('');
+                }
+
+                // 4. Ingested Logs Feed
                 const container = document.getElementById('logs-container');
                 if (logs.length > 0) {
                     container.innerHTML = logs.slice().reverse().map(log => {
@@ -153,7 +193,7 @@
                     }).join('');
                 }
 
-                // Node & Edge Graph Construction
+                // 5. Cytoscape Topology Reconstruction
                 let maxThreat = 0;
                 const nodeMap = new Map();
                 const edgeMap = new Map();
@@ -206,10 +246,10 @@
 
                     cy.elements().remove();
                     cy.add(elements);
-                    cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.25, padding: 30 }).run();
+                    cy.layout({ name: 'breadthfirst', directed: true, spacingFactor: 1.25, padding: 25 }).run();
                 }
 
-                // Threat Indicators
+                // 6. Threat Level Badges
                 const threatEl = document.getElementById('threat-indicator');
                 const soarEl = document.getElementById('soar-status');
                 if (maxThreat >= 90) {
@@ -255,6 +295,10 @@
 
         function generateReport() {
             window.open('http://127.0.0.1:8000/api/v1/generate-report', '_blank');
+        }
+
+        function exportStix() {
+            window.open('http://127.0.0.1:8000/api/v1/export/stix', '_blank');
         }
 
         setInterval(updateTelemetry, 2000);
