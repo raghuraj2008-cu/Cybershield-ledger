@@ -87,6 +87,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     text = payload.raw_input.strip()
     file_att = payload.file_attachment or ""
     
+    # 1. Automatic Social Media Platform Signature Identification
     detected_platforms = []
     platform_signatures = {
         "Instagram": [r"instagram\.com", r"instagr\.am", r"\b@insta\b", r"\breel\b", r"\big_"],
@@ -105,16 +106,23 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     if not detected_platforms:
         detected_platforms = ["Omni-Channel Web / File Stream"]
 
+    # 2. Threat Analysis & Heuristic Extraction
     score = 10
     threat_indicators = []
-    
-    urls = re.findall(r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+', text)
+
+    # Standard Antivirus / Malware Test Checks
+    if re.search(r"\beicar\b|anti-malware-testfile|x5o!p%@ap", text, re.IGNORECASE):
+        score += 85
+        threat_indicators.append("Known Antivirus Threat Signature (EICAR / Test Payload)")
+
+    # URL & Typosquat Analysis
+    urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
     suspicious_tlds = [".xyz", ".tk", ".top", ".ru", ".cc", ".link", ".click", ".pw", ".space"]
     url_shorteners = ["bit.ly", "tinyurl.com", "cutt.ly", "is.gd", "t.co", "rb.gy"]
     typosquats = ["instagram-verify", "telegram-gift", "whatsapp-update", "free-crypto", "bank-login", "reel-viral"]
 
     for u in urls:
-        parsed = urllib.parse.urlparse(u)
+        parsed = urllib.parse.urlparse(u if u.startswith("http") else "http://" + u)
         domain = parsed.netloc.lower()
         if any(domain.endswith(tld) for tld in suspicious_tlds):
             score += 40
@@ -126,6 +134,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
             score += 45
             threat_indicators.append(f"Typosquatted Brand Impersonation Domain: '{domain}'")
 
+    # Social Engineering Coercion Lures
     lures = [
         (r"\bverify your account\b", 30, "Credential Harvesting Lure"),
         (r"\baccount (will be|is) (suspended|deleted|banned)\b", 35, "Urgency / Extortion Account Ban Lure"),
@@ -139,11 +148,16 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
             score += weight
             threat_indicators.append(label)
 
-    file_matches = re.findall(r'[\w-]+\.(?:apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|xlsm|jar|com)', text, re.IGNORECASE)
-    if file_att or file_matches:
-        detected_file = file_att if file_att else file_matches[0]
+    # File Attachment / Downloaded Ingress Dropper Check (excluding web URLs)
+    text_without_urls = re.sub(r'https?://[^\s<>"]+|www\.[^\s<>"]+', '', text)
+    file_matches = re.findall(r'[\w-]+\.(?:apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|xlsm|jar)', text_without_urls, re.IGNORECASE)
+    
+    if file_att:
         score += 50
-        threat_indicators.append(f"Disguised Weaponized Malware Dropper / Executable File: '{detected_file}'")
+        threat_indicators.append(f"Weaponized Malware Dropper File Ingress: '{file_att}'")
+    elif file_matches:
+        score += 50
+        threat_indicators.append(f"Disguised Weaponized Malware Dropper / Executable File: '{file_matches[0]}'")
 
     final_score = min(score, 99)
     is_threat = final_score >= 70
@@ -156,6 +170,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
         classification = "BENIGN_SOCIAL_NOMINAL"
         verdict = f"✅ No Threat Found on {primary_platform} (System Nominal - {final_score}%)"
 
+    # Ingest event & anchor on-chain
     event = TelemetryEvent(
         event_id=str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat() + "Z",
