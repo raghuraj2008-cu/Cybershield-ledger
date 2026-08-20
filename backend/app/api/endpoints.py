@@ -2,6 +2,8 @@
 import json
 import uuid
 import re
+import math
+import os
 import urllib.parse
 from datetime import datetime
 from fastapi import APIRouter
@@ -12,6 +14,7 @@ from typing import List, Optional, Dict, Any
 router = APIRouter()
 
 telemetry_logs = []
+admin_alerts = []
 deception_canaries = [
     {"canary_id": "CNRY-LSASS-901", "type": "Memory Honeytoken", "account": "svc_ad_sync", "host": "DC-PRIMARY", "status": "ARMED", "tripped_at": None},
     {"canary_id": "CNRY-SMB-902", "type": "Decoy SMB Share", "account": "\\\\DC-PRIMARY\\FinanceShare$", "host": "DC-PRIMARY", "status": "ARMED", "tripped_at": None},
@@ -31,21 +34,16 @@ class TelemetryEvent(BaseModel):
     mitre_tactic: str
     raw_message: str
 
-class EmailPayload(BaseModel):
-    sender: str
-    recipient: str
-    subject: str
-    body: str
-    attachments: Optional[List[str]] = []
-
-class SocialMessagePayload(BaseModel):
-    platform: str
-    sender_id: str
-    recipient: str
-    message_text: str
-    media_url: Optional[str] = None
-    media_name: Optional[str] = None
-    extracted_links: Optional[List[str]] = []
+class DeepForensicsPayload(BaseModel):
+    file_name: str
+    file_path: str
+    file_size_bytes: int
+    sha256_hash: str
+    md5_hash: str
+    entropy_score: float
+    extracted_strings: List[str]
+    detected_signatures: List[str]
+    is_quarantined: bool
 
 def compute_leaf(event_data: dict) -> str:
     cleaned = {k: v for k, v in event_data.items() if k != "leaf_hash"}
@@ -90,153 +88,174 @@ async def ingest_event(event: TelemetryEvent):
         "total_events": len(telemetry_logs)
     }
 
-@router.post("/scan/email")
-async def scan_email(payload: EmailPayload):
+@router.post("/scan/deep-forensics")
+async def deep_forensics_scan(payload: DeepForensicsPayload):
     score = 15
-    indicators = []
-    
-    urgency_patterns = [r"\burgent\b", r"\bverify your password\b", r"\bbank transfer\b", r"\bwire payment\b", r"\baccount suspended\b", r"\bimmediate action\b"]
-    for p in urgency_patterns:
-        if re.search(p, payload.body, re.IGNORECASE) or re.search(p, payload.subject, re.IGNORECASE):
-            score += 25
-            indicators.append(f"Urgent BEC/Coercion Phrase: '{p}'")
-
-    suspicious_domains = ["secure-bank-login.com", "update-microsoft.co", "verify-it-helpdesk.xyz", "paypal-security-alert.tk"]
-    sender_domain = payload.sender.split("@")[-1] if "@" in payload.sender else payload.sender
-    if any(sd in sender_domain for sd in suspicious_domains) or sender_domain.endswith((".xyz", ".tk", ".top", ".ru")):
-        score += 35
-        indicators.append(f"Untrusted / Typosquatted Domain: '{sender_domain}'")
-
-    for att in payload.attachments:
-        if re.search(r"\.(exe|scr|vbs|hta|xlsm|docm|iso|zip)$", att, re.IGNORECASE):
-            score += 40
-            indicators.append(f"Weaponized Attachment Format: '{att}'")
-
-    final_score = min(score, 99)
-    event_type = "PHISHING_SPEAR_ATTACK" if final_score >= 80 else "EMAIL_SPAM_DETECTED" if final_score >= 50 else "EMAIL_BENIGN_CLEAN"
-    mitre_tactic = "TA0001 - Initial Access (Spearphishing Attachment/Link)" if final_score >= 70 else "TA0001 - Initial Access (Benign Email Delivery)"
-
-    event = TelemetryEvent(
-        event_id=str(uuid.uuid4()),
-        timestamp=datetime.utcnow().isoformat() + "Z",
-        event_type=event_type,
-        user=payload.recipient,
-        source_host=payload.sender,
-        target_host="MAIL-GATEWAY-01",
-        process_name="exchange_sec_filter.exe",
-        command=f"Subject: '{payload.subject[:40]}...'",
-        threat_score=final_score,
-        mitre_tactic=mitre_tactic,
-        raw_message=f"Flags: {'; '.join(indicators) if indicators else 'No threat signatures'}"
-    )
-
-    ingest_result = await ingest_event(event)
-    return {
-        "analysis_status": "ANALYZED_AND_ANCHORED",
-        "threat_score": final_score,
-        "classification": event_type,
-        "indicators": indicators,
-        "blockchain_leaf": ingest_result["leaf_hash"],
-        "on_chain_merkle_root": ingest_result["merkle_root"]
-    }
-
-@router.post("/scan/social-message")
-async def scan_social_threat(payload: SocialMessagePayload):
-    score = 10
     threat_indicators = []
-    intel_data = {
-        "platform": payload.platform,
-        "sender": payload.sender_id,
-        "urls_analyzed": [],
-        "media_inspected": payload.media_name,
-        "behavioral_flags": []
-    }
+    
+    # 1. Signature-based triggers
+    if any("EICAR" in sig for sig in payload.detected_signatures):
+        score += 85
+        threat_indicators.append("Known Antivirus Test Signature (EICAR)")
 
-    urls = payload.extracted_links or []
-    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
-    urls += re.findall(url_pattern, payload.message_text)
-    urls = list(set(urls))
-
-    suspicious_tlds = [".xyz", ".tk", ".top", ".ru", ".cc", ".link", ".click", ".pw", ".space"]
-    url_shorteners = ["bit.ly", "tinyurl.com", "cutt.ly", "is.gd", "t.co", "rb.gy"]
-    typosquats = ["instagram-verify", "telegram-gift", "whatsapp-update", "free-crypto", "bank-login", "reel-viral"]
-
-    for u in urls:
-        parsed = urllib.parse.urlparse(u)
-        domain = parsed.netloc.lower()
-        intel_data["urls_analyzed"].append(u)
-
-        if any(domain.endswith(tld) for tld in suspicious_tlds):
-            score += 35
-            threat_indicators.append(f"High-Risk TLD in link: {domain}")
-        if any(shortener in domain for shortener in url_shorteners):
-            score += 25
-            threat_indicators.append(f"Obfuscated Shortened URL: {domain}")
-        if any(tq in domain for tq in typosquats):
-            score += 45
-            threat_indicators.append(f"Typosquatted Brand Impersonation Domain: {domain}")
-
-    lures = [
-        (r"\bverify your account\b", 30, "Credential Harvesting Lure"),
-        (r"\baccount (will be|is) (suspended|deleted|banned)\b", 35, "Urgency / Coercion Extortion"),
-        (r"\bclaim your (gift|reward|prize|crypto|bitcoin|airdrop)\b", 35, "Financial / Crypto Scams"),
-        (r"\bclick (here|this link) to watch\b", 25, "Malicious Video / Reel Redirect Trap"),
-        (r"\botp\b|\bverification code\b", 30, "OTP / 2FA Interception Attempt"),
-        (r"\bdownload (this|the) (app|file|video)\b", 20, "Drive-by Ingress Coercion")
+    # 2. Destructive command & Ransomware strings heuristics
+    destructive_keywords = [
+        ("vssadmin delete shadows", 45, "Ransomware Shadow Copy Deletion"),
+        ("wevtutil cl", 40, "Anti-Forensics Event Log Erasure"),
+        ("bcdedit /set", 35, "Recovery Boot Tampering"),
+        ("format ", 45, "Disk Wipe Routine"),
+        ("powershell -enc", 30, "Obfuscated Encoded Command Execution"),
+        ("mimikatz", 50, "Credential Harvesting Binary Signature"),
+        ("rundll32", 20, "Proxy DLL Execution")
     ]
-    for pattern, weight, label in lures:
-        if re.search(pattern, payload.message_text, re.IGNORECASE):
+    for kw, weight, label in destructive_keywords:
+        if any(kw in s.lower() for s in payload.extracted_strings):
             score += weight
-            threat_indicators.append(label)
+            threat_indicators.append(f"{label} detected in binary strings")
 
-    if payload.media_name:
-        ext_match = re.search(r"\.(apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|jar)$", payload.media_name, re.IGNORECASE)
-        if ext_match:
-            score += 50
-            threat_indicators.append(f"Executable / Weaponized Payload Disguised as Media: {payload.media_name}")
+    # 3. High Entropy Check (Packed / Obfuscated / Encrypted malware)
+    if payload.entropy_score > 7.2:
+        score += 35
+        threat_indicators.append(f"Abnormally High Entropy ({payload.entropy_score:.2f}/8.0): High probability of packed/encrypted destructive payload")
+
+    # 4. Dangerous file extensions check
+    if re.search(r"\.(exe|scr|vbs|bat|ps1|hta|iso|dll|apk|zip)$", payload.file_name, re.IGNORECASE):
+        score += 25
+        threat_indicators.append(f"High-Risk Executable Drop: {payload.file_name}")
 
     final_score = min(score, 99)
-    intel_data["behavioral_flags"] = threat_indicators
-
     classification = (
-        "CRITICAL_SOCIAL_MEDIA_MALWARE" if final_score >= 85 else
-        "SUSPICIOUS_PHISHING_LINK" if final_score >= 60 else
-        "BENIGN_SOCIAL_COMMUNICATION"
+        "DESTRUCTIVE_MALWARE_PREVENTED" if final_score >= 85 else
+        "SUSPICIOUS_UNTRUSTED_INGRESS" if final_score >= 60 else
+        "BENIGN_VERIFIED_FILE"
     )
 
     tactic = (
-        "TA0001 - Initial Access (Social Media Phishing / Drive-by)" if final_score >= 60 else
-        "TA0001 - Initial Access (Benign Social Interaction)"
+        "TA0002 - Execution (User Execution / Malicious File)" if final_score >= 60 else
+        "TA0001 - Initial Access (Benign File Ingress)"
     )
 
+    alert_summary = {
+        "alert_id": str(uuid.uuid4()),
+        "timestamp": datetime.utcnow().isoformat() + "Z",
+        "file_name": payload.file_name,
+        "threat_score": final_score,
+        "classification": classification,
+        "sha256": payload.sha256_hash,
+        "quarantined": payload.is_quarantined,
+        "indicators": threat_indicators
+    }
+    admin_alerts.insert(0, alert_summary)
+
+    # Ingest event & anchor on-chain
     event = TelemetryEvent(
         event_id=str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat() + "Z",
         event_type=classification,
-        user=payload.recipient,
-        source_host=f"{payload.platform.upper()}:{payload.sender_id}",
-        target_host="USER-MOBILE-ENDPOINT",
-        process_name=f"{payload.platform.lower()}_client.exe",
-        command=f"Msg: '{payload.message_text[:35]}...'",
+        user=os.environ.get("USERNAME", "EndpointUser"),
+        source_host="INGRESS-VECTOR",
+        target_host="LOCAL-ENDPOINT-CORE",
+        process_name="quarantine_vault_guard.exe",
+        command=f"Pre-Execution Isolation: {payload.file_name}",
         threat_score=final_score,
         mitre_tactic=tactic,
-        raw_message=f"Threat Flags: {'; '.join(threat_indicators) if threat_indicators else 'Zero Threat Signatures'}"
+        raw_message=f"Forensics: Entropy={payload.entropy_score:.2f} | Flags={'; '.join(threat_indicators) if threat_indicators else 'None'}"
     )
-
-    ingest_result = await ingest_event(event)
+    ingest_res = await ingest_event(event)
 
     return {
-        "status": "THREAT_ANALYZED_AND_ANCHORED",
+        "status": "FORENSICS_COMPLETE_AND_ANCHORED",
         "threat_score": final_score,
         "classification": classification,
-        "threat_intel_summary": intel_data,
+        "quarantine_enforced": payload.is_quarantined,
         "indicators": threat_indicators,
-        "blockchain_proof": {
-            "leaf_hash": ingest_result["leaf_hash"],
-            "on_chain_merkle_root": ingest_result["merkle_root"]
+        "forensic_metadata": {
+            "file_name": payload.file_name,
+            "sha256": payload.sha256_hash,
+            "md5": payload.md5_hash,
+            "entropy": payload.entropy_score,
+            "size_bytes": payload.file_size_bytes
         },
-        "soar_recommendation": "BLOCK_SENDER_AND_ISOLATE_LINK" if final_score >= 80 else "ALLOW"
+        "blockchain_leaf": ingest_res["leaf_hash"],
+        "on_chain_merkle_root": ingest_res["merkle_root"],
+        "admin_notified": True
     }
+
+@router.get("/admin/alerts")
+async def get_admin_alerts():
+    return admin_alerts[:10]
+
+@router.post("/scan/email")
+async def scan_email(payload: Dict[str, Any]):
+    score = 15
+    indicators = []
+    body = payload.get("body", "")
+    subject = payload.get("subject", "")
+    sender = payload.get("sender", "")
+    
+    urgency_patterns = [r"\burgent\b", r"\bverify your password\b", r"\bbank transfer\b", r"\baccount suspended\b"]
+    for p in urgency_patterns:
+        if re.search(p, body, re.IGNORECASE) or re.search(p, subject, re.IGNORECASE):
+            score += 25
+            indicators.append(f"Urgent BEC Phrase: '{p}'")
+
+    if sender.endswith((".xyz", ".tk", ".top", ".ru")):
+        score += 35
+        indicators.append(f"Untrusted Domain: '{sender}'")
+
+    final_score = min(score, 99)
+    event_type = "PHISHING_SPEAR_ATTACK" if final_score >= 80 else "EMAIL_BENIGN_CLEAN"
+    
+    event = TelemetryEvent(
+        event_id=str(uuid.uuid4()),
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        event_type=event_type,
+        user=payload.get("recipient", "User"),
+        source_host=sender,
+        target_host="MAIL-GATEWAY-01",
+        process_name="mail_scanner.exe",
+        command=f"Subject: '{subject[:30]}...'",
+        threat_score=final_score,
+        mitre_tactic="TA0001 - Initial Access",
+        raw_message=f"Flags: {'; '.join(indicators)}"
+    )
+    ingest_result = await ingest_event(event)
+    return {"threat_score": final_score, "classification": event_type, "indicators": indicators, "blockchain_leaf": ingest_result["leaf_hash"], "on_chain_merkle_root": ingest_result["merkle_root"]}
+
+@router.post("/scan/social-message")
+async def scan_social_threat(payload: Dict[str, Any]):
+    msg = payload.get("message_text", "")
+    score = 10
+    indicators = []
+    
+    if any(tld in msg for tld in [".xyz", ".tk", "bit.ly", "tinyurl"]):
+        score += 35
+        indicators.append("Suspicious / Shortened Link")
+    if re.search(r"\b(verify|banned|suspended|claim|reward|crypto)\b", msg, re.IGNORECASE):
+        score += 35
+        indicators.append("Social Engineering Lure")
+    if payload.get("media_name", "") and payload["media_name"].endswith((".apk", ".exe", ".scr")):
+        score += 50
+        indicators.append("Weaponized Disguised Media")
+
+    final_score = min(score, 99)
+    classification = "CRITICAL_SOCIAL_MEDIA_MALWARE" if final_score >= 80 else "BENIGN_SOCIAL_COMMUNICATION"
+    
+    event = TelemetryEvent(
+        event_id=str(uuid.uuid4()),
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        event_type=classification,
+        user=payload.get("recipient", "User"),
+        source_host=f"{payload.get('platform', 'App')}:{payload.get('sender_id', 'User')}",
+        target_host="USER-MOBILE-ENDPOINT",
+        process_name="social_scanner.exe",
+        command=f"Msg: '{msg[:30]}...'",
+        threat_score=final_score,
+        mitre_tactic="TA0001 - Initial Access",
+        raw_message=f"Flags: {'; '.join(indicators)}"
+    )
+    ingest_result = await ingest_event(event)
+    return {"threat_score": final_score, "classification": classification, "indicators": indicators, "blockchain_proof": {"leaf_hash": ingest_result["leaf_hash"], "on_chain_merkle_root": ingest_result["merkle_root"]}, "soar_recommendation": "BLOCK_SENDER" if final_score >= 80 else "ALLOW"}
 
 @router.get("/logs")
 async def get_logs():
@@ -245,12 +264,7 @@ async def get_logs():
 @router.get("/merkle-root")
 async def get_merkle_root():
     all_leaves = [log["leaf_hash"] for log in telemetry_logs]
-    root = compute_merkle_root(all_leaves)
-    return {
-        "merkle_root": root,
-        "total_events": len(telemetry_logs),
-        "status": "CONSENSUS_VERIFIED"
-    }
+    return {"merkle_root": compute_merkle_root(all_leaves), "total_events": len(telemetry_logs), "status": "CONSENSUS_VERIFIED"}
 
 @router.get("/deception/canaries")
 async def get_canaries():
@@ -266,77 +280,23 @@ async def get_blast_radius():
         if log["threat_score"] >= 80:
             compromised_hosts.add(log["source_host"])
             compromised_hosts.add(log["target_host"])
-            
     total_count = max(len(all_hosts), 6)
     compromised_count = len(compromised_hosts)
-    exposure_percentage = round((compromised_count / total_count) * 100, 1) if total_count > 0 else 0
-    
-    return {
-        "total_entities_evaluated": total_count,
-        "compromised_entities": list(compromised_hosts),
-        "enterprise_blast_radius_pct": exposure_percentage,
-        "critical_crown_jewel_status": "AT_IMMINENT_RISK" if exposure_percentage >= 50 else "CONTAINED",
-        "shortest_critical_path": ["EXT-WAN-198.51.100.24", "WEB-DMZ-01", "APP-SRV-02", "DC-PRIMARY", "BACKUP-DB", "C2-DROP-AWS-S3"]
-    }
+    return {"total_entities_evaluated": total_count, "compromised_entities": list(compromised_hosts), "enterprise_blast_radius_pct": round((compromised_count / total_count) * 100, 1) if total_count > 0 else 0}
 
 @router.get("/export/stix", response_class=JSONResponse)
 async def export_stix21():
     bundle_id = f"bundle--{uuid.uuid4()}"
-    stix_objects = []
-    
-    actor_id = f"threat-actor--{uuid.uuid4()}"
-    stix_objects.append({
-        "type": "threat-actor",
-        "spec_version": "2.1",
-        "id": actor_id,
-        "created": datetime.utcnow().isoformat() + "Z",
-        "modified": datetime.utcnow().isoformat() + "Z",
-        "name": "Omni-Channel-APT-Syndicate",
-        "threat_actor_types": ["nation-state", "cybercrime-syndicate"],
-        "sophistication": "advanced",
-        "resource_level": "organization"
-    })
-    
+    stix_objects = [{"type": "threat-actor", "spec_version": "2.1", "id": f"threat-actor--{uuid.uuid4()}", "created": datetime.utcnow().isoformat() + "Z", "modified": datetime.utcnow().isoformat() + "Z", "name": "Omni-Channel-APT-Syndicate"}]
     for log in telemetry_logs:
-        indicator_id = f"indicator--{uuid.uuid4()}"
-        pattern_id = f"attack-pattern--{uuid.uuid4()}"
-        
-        stix_objects.append({
-            "type": "attack-pattern",
-            "spec_version": "2.1",
-            "id": pattern_id,
-            "created": datetime.utcnow().isoformat() + "Z",
-            "modified": datetime.utcnow().isoformat() + "Z",
-            "name": log["event_type"],
-            "description": log["mitre_tactic"],
-            "external_references": [{
-                "source_name": "mitre-attack",
-                "external_id": log["mitre_tactic"].split(" - ")[0] if " - " in log["mitre_tactic"] else "TA0001"
-            }]
-        })
-        
-        stix_objects.append({
-            "type": "indicator",
-            "spec_version": "2.1",
-            "id": indicator_id,
-            "created": datetime.utcnow().isoformat() + "Z",
-            "modified": datetime.utcnow().isoformat() + "Z",
-            "name": f"Adversary Signal: {log['source_host']} -> {log['target_host']}",
-            "pattern_type": "stix",
-            "pattern": f"[network-traffic:src_ref.value = '{log['source_host']}' AND network-traffic:dst_ref.value = '{log['target_host']}']",
-            "valid_from": log["timestamp"],
-            "custom_properties": {
-                "x_sha256_leaf_digest": log.get("leaf_hash", ""),
-                "x_threat_score": log["threat_score"]
-            }
-        })
-
+        stix_objects.append({"type": "attack-pattern", "spec_version": "2.1", "id": f"attack-pattern--{uuid.uuid4()}", "created": datetime.utcnow().isoformat() + "Z", "modified": datetime.utcnow().isoformat() + "Z", "name": log["event_type"], "description": log["mitre_tactic"]})
     return {"type": "bundle", "id": bundle_id, "spec_version": "2.1", "objects": stix_objects}
 
 @router.post("/clear")
 async def clear_logs():
-    global telemetry_logs, deception_canaries
+    global telemetry_logs, admin_alerts, deception_canaries
     telemetry_logs = []
+    admin_alerts = []
     for c in deception_canaries:
         c["status"] = "ARMED"
         c["tripped_at"] = None
@@ -346,76 +306,5 @@ async def clear_logs():
 async def generate_legal_dfir_report():
     all_leaves = [log["leaf_hash"] for log in telemetry_logs]
     root = compute_merkle_root(all_leaves)
-    events_count = len(telemetry_logs)
-    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S UTC")
-    
-    rows = ""
-    for log in telemetry_logs:
-        score_badge = f'<span style="color: {"#f43f5e" if log["threat_score"] >= 90 else "#f59e0b" if log["threat_score"] >= 70 else "#10b981"}; font-weight:bold;">{log["threat_score"]}%</span>'
-        short_hash = log.get("leaf_hash", "N/A")[:24]
-        rows += f"""
-        <tr>
-            <td style="padding: 10px; border-bottom: 1px solid #334155;">{log['timestamp']}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #334155;"><strong>{log['event_type']}</strong></td>
-            <td style="padding: 10px; border-bottom: 1px solid #334155;">{log['source_host']} &rarr; {log['target_host']}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #334155;">{log['mitre_tactic']}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #334155;">{score_badge}</td>
-            <td style="padding: 10px; border-bottom: 1px solid #334155; font-family: monospace; font-size: 11px; color:#38bdf8;">{short_hash}...</td>
-        </tr>
-        """
-
-    html_content = f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>CyberShield DFIR Forensic Legal Brief</title>
-        <style>
-            body {{ font-family: 'Segoe UI', Arial, sans-serif; background-color: #0b0f19; color: #f8fafc; padding: 40px; }}
-            .card {{ background: #1e293b; border-radius: 12px; padding: 30px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
-            .header {{ border-bottom: 2px solid #38bdf8; padding-bottom: 15px; margin-bottom: 20px; display: flex; justify-content: space-between; }}
-            .root-box {{ background: #0f172a; padding: 15px; border-radius: 8px; border: 1px solid #38bdf8; margin-bottom: 25px; font-family: monospace; color: #38bdf8; word-break: break-all; }}
-            table {{ width: 100%; border-collapse: collapse; margin-top: 15px; font-size: 13px; }}
-            th {{ background: #0f172a; padding: 12px 10px; text-align: left; color: #94a3b8; border-bottom: 2px solid #334155; }}
-            .seal {{ display: inline-block; background: rgba(16, 185, 129, 0.1); border: 1px solid #10b981; color: #10b981; padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 12px; }}
-        </style>
-    </head>
-    <body>
-        <div class="card">
-            <div class="header">
-                <div>
-                    <h1 style="margin:0; font-size: 24px; color: #38bdf8;">CYBERSHIELD DFIR FORENSIC INCIDENT BRIEF</h1>
-                    <p style="margin:5px 0 0 0; color: #94a3b8; font-size: 13px;">Automated Chain of Custody & Cryptographic Evidence Ledger</p>
-                </div>
-                <div style="text-align: right;">
-                    <div class="seal">LEGAL INTEGRITY VERIFIED</div>
-                    <p style="margin:5px 0 0 0; font-size: 11px; color: #94a3b8;">Generated: {now}</p>
-                </div>
-            </div>
-
-            <div class="root-box">
-                <strong>ON-CHAIN IMMUTABLE MERKLE ROOT:</strong><br>
-                {root}
-                <div style="font-size: 12px; color: #94a3b8; margin-top: 5px;">Total Forensic Leaf Evidences Anchored: {events_count}</div>
-            </div>
-
-            <h3 style="margin-bottom: 5px; color: #e2e8f0;">Chronological Incident & Attack Reconstruction Table</h3>
-            <table>
-                <thead>
-                    <tr>
-                        <th>Timestamp (UTC)</th>
-                        <th>Event Type</th>
-                        <th>Pivoting Trajectory</th>
-                        <th>MITRE ATT&CK Classification</th>
-                        <th>Threat Score</th>
-                        <th>SHA-256 Leaf Digest</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {rows if rows else '<tr><td colspan="6" style="padding:15px; text-align:center; color:#94a3b8;">No events recorded.</td></tr>'}
-                </tbody>
-            </table>
-        </div>
-    </body>
-    </html>
-    """
-    return HTMLResponse(content=html_content)
+    rows = "".join([f"<tr><td style='padding:8px;'>{l['timestamp']}</td><td style='padding:8px;'><strong>{l['event_type']}</strong></td><td style='padding:8px;'>{l['threat_score']}%</td><td style='padding:8px; font-family:monospace;'>{l.get('leaf_hash','')[:20]}...</td></tr>" for l in telemetry_logs])
+    return HTMLResponse(content=f"<html><body style='background:#0b0f19; color:white; font-family:sans-serif; padding:30px;'><h2>CYBERSHIELD DFIR FORENSIC INCIDENT BRIEF</h2><p><strong>Merkle Root:</strong> {root}</p><table border='1' cellpadding='5' style='border-collapse:collapse; width:100%; border-color:#334155;'><thead><tr><th>Timestamp</th><th>Event</th><th>Score</th><th>Leaf Hash</th></tr></thead><tbody>{rows if rows else '<tr><td colspan=4>No events.</td></tr>'}</tbody></table></body></html>")
