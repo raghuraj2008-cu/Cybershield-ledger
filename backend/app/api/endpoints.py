@@ -31,8 +31,15 @@ class TelemetryEvent(BaseModel):
     mitre_tactic: str
     raw_message: str
 
+class EmailPayload(BaseModel):
+    sender: str
+    recipient: str
+    subject: str
+    body: str
+    attachments: Optional[List[str]] = []
+
 class SocialMessagePayload(BaseModel):
-    platform: str  # WhatsApp, Instagram, Telegram, SMS, Discord, Twitter/X
+    platform: str
     sender_id: str
     recipient: str
     message_text: str
@@ -83,6 +90,56 @@ async def ingest_event(event: TelemetryEvent):
         "total_events": len(telemetry_logs)
     }
 
+@router.post("/scan/email")
+async def scan_email(payload: EmailPayload):
+    score = 15
+    indicators = []
+    
+    urgency_patterns = [r"\burgent\b", r"\bverify your password\b", r"\bbank transfer\b", r"\bwire payment\b", r"\baccount suspended\b", r"\bimmediate action\b"]
+    for p in urgency_patterns:
+        if re.search(p, payload.body, re.IGNORECASE) or re.search(p, payload.subject, re.IGNORECASE):
+            score += 25
+            indicators.append(f"Urgent BEC/Coercion Phrase: '{p}'")
+
+    suspicious_domains = ["secure-bank-login.com", "update-microsoft.co", "verify-it-helpdesk.xyz", "paypal-security-alert.tk"]
+    sender_domain = payload.sender.split("@")[-1] if "@" in payload.sender else payload.sender
+    if any(sd in sender_domain for sd in suspicious_domains) or sender_domain.endswith((".xyz", ".tk", ".top", ".ru")):
+        score += 35
+        indicators.append(f"Untrusted / Typosquatted Domain: '{sender_domain}'")
+
+    for att in payload.attachments:
+        if re.search(r"\.(exe|scr|vbs|hta|xlsm|docm|iso|zip)$", att, re.IGNORECASE):
+            score += 40
+            indicators.append(f"Weaponized Attachment Format: '{att}'")
+
+    final_score = min(score, 99)
+    event_type = "PHISHING_SPEAR_ATTACK" if final_score >= 80 else "EMAIL_SPAM_DETECTED" if final_score >= 50 else "EMAIL_BENIGN_CLEAN"
+    mitre_tactic = "TA0001 - Initial Access (Spearphishing Attachment/Link)" if final_score >= 70 else "TA0001 - Initial Access (Benign Email Delivery)"
+
+    event = TelemetryEvent(
+        event_id=str(uuid.uuid4()),
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        event_type=event_type,
+        user=payload.recipient,
+        source_host=payload.sender,
+        target_host="MAIL-GATEWAY-01",
+        process_name="exchange_sec_filter.exe",
+        command=f"Subject: '{payload.subject[:40]}...'",
+        threat_score=final_score,
+        mitre_tactic=mitre_tactic,
+        raw_message=f"Flags: {'; '.join(indicators) if indicators else 'No threat signatures'}"
+    )
+
+    ingest_result = await ingest_event(event)
+    return {
+        "analysis_status": "ANALYZED_AND_ANCHORED",
+        "threat_score": final_score,
+        "classification": event_type,
+        "indicators": indicators,
+        "blockchain_leaf": ingest_result["leaf_hash"],
+        "on_chain_merkle_root": ingest_result["merkle_root"]
+    }
+
 @router.post("/scan/social-message")
 async def scan_social_threat(payload: SocialMessagePayload):
     score = 10
@@ -95,7 +152,6 @@ async def scan_social_threat(payload: SocialMessagePayload):
         "behavioral_flags": []
     }
 
-    # 1. URL & Shortener Analysis
     urls = payload.extracted_links or []
     url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
     urls += re.findall(url_pattern, payload.message_text)
@@ -120,7 +176,6 @@ async def scan_social_threat(payload: SocialMessagePayload):
             score += 45
             threat_indicators.append(f"Typosquatted Brand Impersonation Domain: {domain}")
 
-    # 2. Social Engineering & Lures
     lures = [
         (r"\bverify your account\b", 30, "Credential Harvesting Lure"),
         (r"\baccount (will be|is) (suspended|deleted|banned)\b", 35, "Urgency / Coercion Extortion"),
@@ -134,7 +189,6 @@ async def scan_social_threat(payload: SocialMessagePayload):
             score += weight
             threat_indicators.append(label)
 
-    # 3. Media / Video / Attachment Payload Check
     if payload.media_name:
         ext_match = re.search(r"\.(apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|jar)$", payload.media_name, re.IGNORECASE)
         if ext_match:
@@ -155,7 +209,6 @@ async def scan_social_threat(payload: SocialMessagePayload):
         "TA0001 - Initial Access (Benign Social Interaction)"
     )
 
-    # Automatically anchor event to blockchain
     event = TelemetryEvent(
         event_id=str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat() + "Z",
@@ -238,7 +291,7 @@ async def export_stix21():
         "id": actor_id,
         "created": datetime.utcnow().isoformat() + "Z",
         "modified": datetime.utcnow().isoformat() + "Z",
-        "name": "Social-Engineering-APT-Group",
+        "name": "Omni-Channel-APT-Syndicate",
         "threat_actor_types": ["nation-state", "cybercrime-syndicate"],
         "sophistication": "advanced",
         "resource_level": "organization"
