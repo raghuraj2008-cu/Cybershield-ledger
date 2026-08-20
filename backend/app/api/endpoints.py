@@ -1,6 +1,7 @@
 ﻿import hashlib
 import json
 import uuid
+import re
 from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -29,6 +30,13 @@ class TelemetryEvent(BaseModel):
     mitre_tactic: str
     raw_message: str
 
+class EmailPayload(BaseModel):
+    sender: str
+    recipient: str
+    subject: str
+    body: str
+    attachments: Optional[List[str]] = []
+
 def compute_leaf(event_data: dict) -> str:
     cleaned = {k: v for k, v in event_data.items() if k != "leaf_hash"}
     serialized = json.dumps(cleaned, sort_keys=True)
@@ -56,7 +64,6 @@ async def ingest_event(event: TelemetryEvent):
     event_dict["leaf_hash"] = leaf_hash
     telemetry_logs.append(event_dict)
     
-    # Trip canaries automatically if critical threat targets DC or DB
     if event.threat_score >= 90:
         for c in deception_canaries:
             if c["host"] in [event.source_host, event.target_host] and c["status"] == "ARMED":
@@ -71,6 +78,59 @@ async def ingest_event(event: TelemetryEvent):
         "leaf_hash": leaf_hash,
         "merkle_root": current_root,
         "total_events": len(telemetry_logs)
+    }
+
+@router.post("/scan/email")
+async def scan_email(payload: EmailPayload):
+    score = 15
+    indicators = []
+    
+    # 1. Suspicious keywords analysis (BEC & Urgency)
+    urgency_patterns = [r"\burgent\b", r"\bverify your password\b", r"\bbank transfer\b", r"\bwire payment\b", r"\baccount suspended\b", r"\bimmediate action\b"]
+    for p in urgency_patterns:
+        if re.search(p, payload.body, re.IGNORECASE) or re.search(p, payload.subject, re.IGNORECASE):
+            score += 25
+            indicators.append(f"Urgent BEC/Coercion Phrase: '{p}'")
+
+    # 2. Typosquatting & Suspicious TLD check
+    suspicious_domains = ["secure-bank-login.com", "update-microsoft.co", "verify-it-helpdesk.xyz", "paypal-security-alert.tk"]
+    sender_domain = payload.sender.split("@")[-1] if "@" in payload.sender else payload.sender
+    if any(sd in sender_domain for sd in suspicious_domains) or sender_domain.endswith((".xyz", ".tk", ".top", ".ru")):
+        score += 35
+        indicators.append(f"Untrusted / Typosquatted Domain: '{sender_domain}'")
+
+    # 3. Malicious attachment extensions
+    for att in payload.attachments:
+        if re.search(r"\.(exe|scr|vbs|hta|xlsm|docm|iso|zip)$", att, re.IGNORECASE):
+            score += 40
+            indicators.append(f"Weaponized Attachment Format: '{att}'")
+
+    final_score = min(score, 99)
+    event_type = "PHISHING_SPEAR_ATTACK" if final_score >= 80 else "EMAIL_SPAM_DETECTED" if final_score >= 50 else "EMAIL_BENIGN_CLEAN"
+    mitre_tactic = "TA0001 - Initial Access (Spearphishing Attachment/Link)" if final_score >= 70 else "TA0001 - Initial Access (Benign Email Delivery)"
+
+    event = TelemetryEvent(
+        event_id=str(uuid.uuid4()),
+        timestamp=datetime.utcnow().isoformat() + "Z",
+        event_type=event_type,
+        user=payload.recipient,
+        source_host=payload.sender,
+        target_host="MAIL-GATEWAY-01",
+        process_name="exchange_sec_filter.exe",
+        command=f"Subject: '{payload.subject[:40]}...'",
+        threat_score=final_score,
+        mitre_tactic=mitre_tactic,
+        raw_message=f"Flags: {'; '.join(indicators) if indicators else 'No threat signatures'}"
+    )
+
+    ingest_result = await ingest_event(event)
+    return {
+        "analysis_status": "ANALYZED_AND_ANCHORED",
+        "threat_score": final_score,
+        "classification": event_type,
+        "indicators": indicators,
+        "blockchain_leaf": ingest_result["leaf_hash"],
+        "on_chain_merkle_root": ingest_result["merkle_root"]
     }
 
 @router.get("/logs")
@@ -119,7 +179,6 @@ async def export_stix21():
     bundle_id = f"bundle--{uuid.uuid4()}"
     stix_objects = []
     
-    # 1. Threat Actor Object
     actor_id = f"threat-actor--{uuid.uuid4()}"
     stix_objects.append({
         "type": "threat-actor",
@@ -133,7 +192,6 @@ async def export_stix21():
         "resource_level": "government"
     })
     
-    # 2. Indicators & Attack Patterns from Telemetry
     for log in telemetry_logs:
         indicator_id = f"indicator--{uuid.uuid4()}"
         pattern_id = f"attack-pattern--{uuid.uuid4()}"
@@ -168,13 +226,7 @@ async def export_stix21():
             }
         })
 
-    stix_bundle = {
-        "type": "bundle",
-        "id": bundle_id,
-        "spec_version": "2.1",
-        "objects": stix_objects
-    }
-    return stix_bundle
+    return {"type": "bundle", "id": bundle_id, "spec_version": "2.1", "objects": stix_objects}
 
 @router.post("/clear")
 async def clear_logs():
@@ -211,7 +263,7 @@ async def generate_legal_dfir_report():
     <!DOCTYPE html>
     <html>
     <head>
-        <title>CyberShield Forensics & Incident Response (DFIR) Legal Brief</title>
+        <title>CyberShield DFIR Forensic Legal Brief</title>
         <style>
             body {{ font-family: 'Segoe UI', Arial, sans-serif; background-color: #0b0f19; color: #f8fafc; padding: 40px; }}
             .card {{ background: #1e293b; border-radius: 12px; padding: 30px; border: 1px solid #334155; box-shadow: 0 10px 25px rgba(0,0,0,0.5); }}
