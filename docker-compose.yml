@@ -1,21 +1,46 @@
-version: '3.8'
+﻿version: '3.8'
 
 services:
-  backend:
-    build: ./backend
-    container_name: cybershield-backend
+  blockchain-node:
+    build:
+      context: ./blockchain
+      dockerfile: Dockerfile
+    container_name: cybershield-evm-node
+    ports:
+      - "8545:8545"
+    networks:
+      - cybershield-net
+    healthcheck:
+      test: ["CMD", "nc", "-z", "localhost", "8545"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+
+  backend-api:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: cybershield-fastapi-core
     ports:
       - "8000:8000"
     environment:
-      - SEVERITY_THRESHOLD=90
-    restart: always
+      - EVM_RPC_URL=http://blockchain-node:8545
+    depends_on:
+      blockchain-node:
+        condition: service_healthy
+    networks:
+      - cybershield-net
 
-  frontend:
+  frontend-dashboard:
     image: nginx:alpine
-    container_name: cybershield-frontend
-    volumes:
-      - ./frontend:/usr/share/nginx/html
+    container_name: cybershield-soc-ui
     ports:
       - "3000:80"
-    depends_on:
-      - backend
+    volumes:
+      - ./frontend:/usr/share/nginx/html:ro
+    networks:
+      - cybershield-net
+
+networks:
+  cybershield-net:
+    driver: bridge
