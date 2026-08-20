@@ -2,6 +2,7 @@
 import json
 import uuid
 import re
+import urllib.parse
 from datetime import datetime
 from fastapi import APIRouter
 from fastapi.responses import HTMLResponse, JSONResponse
@@ -30,12 +31,14 @@ class TelemetryEvent(BaseModel):
     mitre_tactic: str
     raw_message: str
 
-class EmailPayload(BaseModel):
-    sender: str
+class SocialMessagePayload(BaseModel):
+    platform: str  # WhatsApp, Instagram, Telegram, SMS, Discord, Twitter/X
+    sender_id: str
     recipient: str
-    subject: str
-    body: str
-    attachments: Optional[List[str]] = []
+    message_text: str
+    media_url: Optional[str] = None
+    media_name: Optional[str] = None
+    extracted_links: Optional[List[str]] = []
 
 def compute_leaf(event_data: dict) -> str:
     cleaned = {k: v for k, v in event_data.items() if k != "leaf_hash"}
@@ -80,57 +83,106 @@ async def ingest_event(event: TelemetryEvent):
         "total_events": len(telemetry_logs)
     }
 
-@router.post("/scan/email")
-async def scan_email(payload: EmailPayload):
-    score = 15
-    indicators = []
-    
-    # 1. Suspicious keywords analysis (BEC & Urgency)
-    urgency_patterns = [r"\burgent\b", r"\bverify your password\b", r"\bbank transfer\b", r"\bwire payment\b", r"\baccount suspended\b", r"\bimmediate action\b"]
-    for p in urgency_patterns:
-        if re.search(p, payload.body, re.IGNORECASE) or re.search(p, payload.subject, re.IGNORECASE):
+@router.post("/scan/social-message")
+async def scan_social_threat(payload: SocialMessagePayload):
+    score = 10
+    threat_indicators = []
+    intel_data = {
+        "platform": payload.platform,
+        "sender": payload.sender_id,
+        "urls_analyzed": [],
+        "media_inspected": payload.media_name,
+        "behavioral_flags": []
+    }
+
+    # 1. URL & Shortener Analysis
+    urls = payload.extracted_links or []
+    url_pattern = r'https?://(?:[-\w.]|(?:%[\da-fA-F]{2}))+'
+    urls += re.findall(url_pattern, payload.message_text)
+    urls = list(set(urls))
+
+    suspicious_tlds = [".xyz", ".tk", ".top", ".ru", ".cc", ".link", ".click", ".pw", ".space"]
+    url_shorteners = ["bit.ly", "tinyurl.com", "cutt.ly", "is.gd", "t.co", "rb.gy"]
+    typosquats = ["instagram-verify", "telegram-gift", "whatsapp-update", "free-crypto", "bank-login", "reel-viral"]
+
+    for u in urls:
+        parsed = urllib.parse.urlparse(u)
+        domain = parsed.netloc.lower()
+        intel_data["urls_analyzed"].append(u)
+
+        if any(domain.endswith(tld) for tld in suspicious_tlds):
+            score += 35
+            threat_indicators.append(f"High-Risk TLD in link: {domain}")
+        if any(shortener in domain for shortener in url_shorteners):
             score += 25
-            indicators.append(f"Urgent BEC/Coercion Phrase: '{p}'")
+            threat_indicators.append(f"Obfuscated Shortened URL: {domain}")
+        if any(tq in domain for tq in typosquats):
+            score += 45
+            threat_indicators.append(f"Typosquatted Brand Impersonation Domain: {domain}")
 
-    # 2. Typosquatting & Suspicious TLD check
-    suspicious_domains = ["secure-bank-login.com", "update-microsoft.co", "verify-it-helpdesk.xyz", "paypal-security-alert.tk"]
-    sender_domain = payload.sender.split("@")[-1] if "@" in payload.sender else payload.sender
-    if any(sd in sender_domain for sd in suspicious_domains) or sender_domain.endswith((".xyz", ".tk", ".top", ".ru")):
-        score += 35
-        indicators.append(f"Untrusted / Typosquatted Domain: '{sender_domain}'")
+    # 2. Social Engineering & Lures
+    lures = [
+        (r"\bverify your account\b", 30, "Credential Harvesting Lure"),
+        (r"\baccount (will be|is) (suspended|deleted|banned)\b", 35, "Urgency / Coercion Extortion"),
+        (r"\bclaim your (gift|reward|prize|crypto|bitcoin|airdrop)\b", 35, "Financial / Crypto Scams"),
+        (r"\bclick (here|this link) to watch\b", 25, "Malicious Video / Reel Redirect Trap"),
+        (r"\botp\b|\bverification code\b", 30, "OTP / 2FA Interception Attempt"),
+        (r"\bdownload (this|the) (app|file|video)\b", 20, "Drive-by Ingress Coercion")
+    ]
+    for pattern, weight, label in lures:
+        if re.search(pattern, payload.message_text, re.IGNORECASE):
+            score += weight
+            threat_indicators.append(label)
 
-    # 3. Malicious attachment extensions
-    for att in payload.attachments:
-        if re.search(r"\.(exe|scr|vbs|hta|xlsm|docm|iso|zip)$", att, re.IGNORECASE):
-            score += 40
-            indicators.append(f"Weaponized Attachment Format: '{att}'")
+    # 3. Media / Video / Attachment Payload Check
+    if payload.media_name:
+        ext_match = re.search(r"\.(apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|jar)$", payload.media_name, re.IGNORECASE)
+        if ext_match:
+            score += 50
+            threat_indicators.append(f"Executable / Weaponized Payload Disguised as Media: {payload.media_name}")
 
     final_score = min(score, 99)
-    event_type = "PHISHING_SPEAR_ATTACK" if final_score >= 80 else "EMAIL_SPAM_DETECTED" if final_score >= 50 else "EMAIL_BENIGN_CLEAN"
-    mitre_tactic = "TA0001 - Initial Access (Spearphishing Attachment/Link)" if final_score >= 70 else "TA0001 - Initial Access (Benign Email Delivery)"
+    intel_data["behavioral_flags"] = threat_indicators
 
+    classification = (
+        "CRITICAL_SOCIAL_MEDIA_MALWARE" if final_score >= 85 else
+        "SUSPICIOUS_PHISHING_LINK" if final_score >= 60 else
+        "BENIGN_SOCIAL_COMMUNICATION"
+    )
+
+    tactic = (
+        "TA0001 - Initial Access (Social Media Phishing / Drive-by)" if final_score >= 60 else
+        "TA0001 - Initial Access (Benign Social Interaction)"
+    )
+
+    # Automatically anchor event to blockchain
     event = TelemetryEvent(
         event_id=str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat() + "Z",
-        event_type=event_type,
+        event_type=classification,
         user=payload.recipient,
-        source_host=payload.sender,
-        target_host="MAIL-GATEWAY-01",
-        process_name="exchange_sec_filter.exe",
-        command=f"Subject: '{payload.subject[:40]}...'",
+        source_host=f"{payload.platform.upper()}:{payload.sender_id}",
+        target_host="USER-MOBILE-ENDPOINT",
+        process_name=f"{payload.platform.lower()}_client.exe",
+        command=f"Msg: '{payload.message_text[:35]}...'",
         threat_score=final_score,
-        mitre_tactic=mitre_tactic,
-        raw_message=f"Flags: {'; '.join(indicators) if indicators else 'No threat signatures'}"
+        mitre_tactic=tactic,
+        raw_message=f"Threat Flags: {'; '.join(threat_indicators) if threat_indicators else 'Zero Threat Signatures'}"
     )
 
     ingest_result = await ingest_event(event)
+
     return {
-        "analysis_status": "ANALYZED_AND_ANCHORED",
+        "status": "THREAT_ANALYZED_AND_ANCHORED",
         "threat_score": final_score,
-        "classification": event_type,
-        "indicators": indicators,
-        "blockchain_leaf": ingest_result["leaf_hash"],
-        "on_chain_merkle_root": ingest_result["merkle_root"]
+        "classification": classification,
+        "threat_intel_summary": intel_data,
+        "indicators": threat_indicators,
+        "blockchain_proof": {
+            "leaf_hash": ingest_result["leaf_hash"],
+            "on_chain_merkle_root": ingest_result["merkle_root"]
+        },
+        "soar_recommendation": "BLOCK_SENDER_AND_ISOLATE_LINK" if final_score >= 80 else "ALLOW"
     }
 
 @router.get("/logs")
@@ -186,10 +238,10 @@ async def export_stix21():
         "id": actor_id,
         "created": datetime.utcnow().isoformat() + "Z",
         "modified": datetime.utcnow().isoformat() + "Z",
-        "name": "APT-NationState-Lateral-Actor",
-        "threat_actor_types": ["nation-state", "advanced-persistent-threat"],
+        "name": "Social-Engineering-APT-Group",
+        "threat_actor_types": ["nation-state", "cybercrime-syndicate"],
         "sophistication": "advanced",
-        "resource_level": "government"
+        "resource_level": "organization"
     })
     
     for log in telemetry_logs:
@@ -216,7 +268,7 @@ async def export_stix21():
             "id": indicator_id,
             "created": datetime.utcnow().isoformat() + "Z",
             "modified": datetime.utcnow().isoformat() + "Z",
-            "name": f"Adversary Trajectory: {log['source_host']} -> {log['target_host']}",
+            "name": f"Adversary Signal: {log['source_host']} -> {log['target_host']}",
             "pattern_type": "stix",
             "pattern": f"[network-traffic:src_ref.value = '{log['source_host']}' AND network-traffic:dst_ref.value = '{log['target_host']}']",
             "valid_from": log["timestamp"],
