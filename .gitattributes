@@ -1,0 +1,10 @@
+﻿# Mark PowerShell agent scripts as documentation/vendored so they don't dominate the language stats
+agents/*.ps1 linguist-vendored
+*.ps1 linguist-detectable=false
+
+# Explicitly tell GitHub that backend and tests are primary Python code
+backend/**/*.py linguist-detectable=true
+tests/*.py linguist-detectable=true
+
+# Keep frontend HTML/JS clean
+frontend/*.html linguist-detectable=true
