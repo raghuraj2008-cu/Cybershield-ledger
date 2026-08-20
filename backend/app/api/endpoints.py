@@ -87,7 +87,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     text = payload.raw_input.strip()
     file_att = payload.file_attachment or ""
     
-    # 1. Automatic Social Media Platform Signature Identification
+    # 1. Automatic Platform Detection
     detected_platforms = []
     platform_signatures = {
         "Instagram": [r"instagram\.com", r"instagr\.am", r"\b@insta\b", r"\breel\b", r"\big_"],
@@ -96,6 +96,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
         "Discord": [r"discord\.com", r"discord\.gg", r"\bdiscord\b"],
         "Twitter / X": [r"twitter\.com", r"x\.com", r"\bt\.co\b"],
         "YouTube": [r"youtube\.com", r"youtu\.be", r"\bshorts\b"],
+        "Email Gateway": [r"\bfrom:\b", r"\bsubject:\b", r"@", r"\.corp\b"],
         "Direct SMS / Carrier": [r"\bsms\b", r"\botp\b", r"\btxt msg\b"]
     }
     
@@ -106,55 +107,59 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     if not detected_platforms:
         detected_platforms = ["Omni-Channel Web / File Stream"]
 
-    # 2. Threat Analysis & Heuristic Extraction
+    # 2. Threat Heuristics
     score = 10
     threat_indicators = []
 
-    # Standard Antivirus / Malware Test Checks
     if re.search(r"\beicar\b|anti-malware-testfile|x5o!p%@ap", text, re.IGNORECASE):
         score += 85
         threat_indicators.append("Known Antivirus Threat Signature (EICAR / Test Payload)")
 
-    # URL & Typosquat Analysis
     urls = re.findall(r'https?://[^\s<>"]+|www\.[^\s<>"]+', text)
     suspicious_tlds = [".xyz", ".tk", ".top", ".ru", ".cc", ".link", ".click", ".pw", ".space"]
     url_shorteners = ["bit.ly", "tinyurl.com", "cutt.ly", "is.gd", "t.co", "rb.gy"]
-    typosquats = ["instagram-verify", "telegram-gift", "whatsapp-update", "free-crypto", "bank-login", "reel-viral"]
+    typosquats = ["instagram-verify", "telegram-gift", "whatsapp-update", "free-crypto", "bank-login", "reel-viral", "verify-it-helpdesk"]
 
     for u in urls:
         parsed = urllib.parse.urlparse(u if u.startswith("http") else "http://" + u)
         domain = parsed.netloc.lower()
         if any(domain.endswith(tld) for tld in suspicious_tlds):
             score += 40
-            threat_indicators.append(f"High-Risk Phishing TLD Detected: '{domain}'")
+            threat_indicators.append(f"High-Risk Phishing TLD: '{domain}'")
         if any(shortener in domain for shortener in url_shorteners):
             score += 25
             threat_indicators.append(f"Obfuscated Shortened URL Redirect: '{domain}'")
         if any(tq in domain for tq in typosquats):
             score += 45
-            threat_indicators.append(f"Typosquatted Brand Impersonation Domain: '{domain}'")
+            threat_indicators.append(f"Typosquatted Impersonation Domain: '{domain}'")
 
-    # Social Engineering Coercion Lures
     lures = [
-        (r"\bverify your account\b", 30, "Credential Harvesting Lure"),
-        (r"\baccount (will be|is) (suspended|deleted|banned)\b", 35, "Urgency / Extortion Account Ban Lure"),
-        (r"\bclaim your (gift|reward|prize|crypto|bitcoin|airdrop)\b", 35, "Crypto / Financial Scam Scheme"),
-        (r"\bclick (here|this link) to watch\b", 25, "Malicious Video / Reel Click Trap"),
-        (r"\botp\b|\bverification code\b", 30, "2FA / OTP Interception Attempt"),
-        (r"\bdelete shadows\b|\bwevtutil\b|\bvssadmin\b", 50, "Destructive Ransomware Anti-Recovery Commands")
+        (r"\bverify\s+(your\s+)?(account|password|identity|credentials|email)\b", 35, "Credential / Password Harvesting Lure"),
+        (r"\b(account|mailbox|service)\s+(will\s+be|is|has\s+been)\s+(suspended|deleted|banned|locked|disabled)\b", 35, "Urgency & Account Suspension Coercion"),
+        (r"\b(urgent|immediate\s+action|wire\s+payment|bank\s+transfer)\b", 25, "Business Email Compromise (BEC) Urgency Trigger"),
+        (r"\bclaim\s+your\s+(gift|reward|prize|crypto|bitcoin|airdrop)\b", 35, "Crypto / Financial Scam Scheme"),
+        (r"\bclick\s+(here|this\s+link)\s+to\s+watch\b", 25, "Malicious Click Trap"),
+        (r"\botp\b|\bverification\s+code\b", 30, "2FA / OTP Interception Attempt"),
+        (r"\bdelete\s+shadows\b|\bwevtutil\b|\bvssadmin\b", 50, "Destructive Ransomware Command")
     ]
     for pattern, weight, label in lures:
         if re.search(pattern, text, re.IGNORECASE):
             score += weight
             threat_indicators.append(label)
 
-    # File Attachment / Downloaded Ingress Dropper Check (excluding web URLs)
+    # Check for untrusted email domains
+    if any(tld in text for tld in [".xyz", ".tk", ".top", ".ru"]):
+        if not any(f"High-Risk Phishing TLD: '{tld}'" in ind for ind in threat_indicators):
+            score += 30
+            threat_indicators.append("Untrusted External Domain Reference")
+
+    # File Attachment / Downloaded Ingress Dropper Check
     text_without_urls = re.sub(r'https?://[^\s<>"]+|www\.[^\s<>"]+', '', text)
     file_matches = re.findall(r'[\w-]+\.(?:apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|xlsm|jar)', text_without_urls, re.IGNORECASE)
     
-    if file_att:
+    if file_att and any(file_att.lower().endswith(ext) for ext in [".apk", ".exe", ".scr", ".vbs", ".bat", ".ps1", ".hta", ".iso", ".dll", ".zip", ".xlsm", ".jar"]):
         score += 50
-        threat_indicators.append(f"Weaponized Malware Dropper File Ingress: '{file_att}'")
+        threat_indicators.append(f"Weaponized Malware / Macro Attachment Ingress: '{file_att}'")
     elif file_matches:
         score += 50
         threat_indicators.append(f"Disguised Weaponized Malware Dropper / Executable File: '{file_matches[0]}'")
@@ -163,14 +168,18 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     is_threat = final_score >= 70
     primary_platform = ", ".join(detected_platforms)
     
-    if is_threat:
-        classification = "CRITICAL_OMNI_CHANNEL_THREAT" if final_score >= 85 else "SUSPICIOUS_SOCIAL_MEDIA_LURE"
-        verdict = f"🚨 Threat Detected on {primary_platform} (Score: {final_score}%)"
-    else:
-        classification = "BENIGN_SOCIAL_NOMINAL"
-        verdict = f"✅ No Threat Found on {primary_platform} (System Nominal - {final_score}%)"
+    classification = (
+        "PHISHING_SPEAR_ATTACK" if "Email Gateway" in detected_platforms and final_score >= 80 else
+        "CRITICAL_OMNI_CHANNEL_THREAT" if final_score >= 85 else
+        "SUSPICIOUS_SOCIAL_MEDIA_LURE" if is_threat else
+        "BENIGN_SOCIAL_NOMINAL"
+    )
 
-    # Ingest event & anchor on-chain
+    verdict = (
+        f"🚨 Threat Detected on {primary_platform} (Score: {final_score}%)" if is_threat else
+        f"✅ No Threat Found on {primary_platform} (System Nominal - {final_score}%)"
+    )
+
     event = TelemetryEvent(
         event_id=str(uuid.uuid4()),
         timestamp=datetime.utcnow().isoformat() + "Z",
@@ -181,7 +190,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
         process_name="auto_omni_sentinel.exe",
         command=f"Payload: '{text[:35]}...'",
         threat_score=final_score,
-        mitre_tactic="TA0001 - Initial Access (Social / File Ingress)" if is_threat else "TA0001 - Initial Access (Clean Stream)",
+        mitre_tactic="TA0001 - Initial Access (Spearphishing / Ingress)" if is_threat else "TA0001 - Initial Access (Clean Stream)",
         raw_message=f"Platforms: {primary_platform} | Flags: {'; '.join(threat_indicators) if threat_indicators else 'Zero Threat Signatures'}"
     )
 
@@ -191,8 +200,8 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
         "verdict_summary": verdict,
         "threat_detected": is_threat,
         "threat_score": final_score,
-        "identified_platforms": detected_platforms,
         "classification": classification,
+        "identified_platforms": detected_platforms,
         "detailed_indicators": threat_indicators if threat_indicators else ["No suspicious indicators found across analyzed social media signatures."],
         "blockchain_proof": {
             "leaf_hash": ingest_result["leaf_hash"],
@@ -208,7 +217,9 @@ async def deep_forensics_scan(payload: Dict[str, Any]):
 @router.post("/scan/email")
 async def scan_email(payload: Dict[str, Any]):
     raw = f"From: {payload.get('sender','')} Subject: {payload.get('subject','')} {payload.get('body','')}"
-    return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=raw, file_attachment=",".join(payload.get("attachments", []))))
+    atts = payload.get("attachments", [])
+    file_att = atts[0] if isinstance(atts, list) and len(atts) > 0 else None
+    return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=raw, file_attachment=file_att))
 
 @router.post("/scan/social-message")
 async def scan_social_threat(payload: Dict[str, Any]):
