@@ -87,7 +87,6 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     text = payload.raw_input.strip()
     file_att = payload.file_attachment or ""
     
-    # 1. Automatic Platform Detection
     detected_platforms = []
     platform_signatures = {
         "Instagram": [r"instagram\.com", r"instagr\.am", r"\b@insta\b", r"\breel\b", r"\big_"],
@@ -107,7 +106,6 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
     if not detected_platforms:
         detected_platforms = ["Omni-Channel Web / File Stream"]
 
-    # 2. Threat Heuristics
     score = 10
     threat_indicators = []
 
@@ -147,13 +145,11 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
             score += weight
             threat_indicators.append(label)
 
-    # Check for untrusted email domains
     if any(tld in text for tld in [".xyz", ".tk", ".top", ".ru"]):
         if not any(f"High-Risk Phishing TLD: '{tld}'" in ind for ind in threat_indicators):
             score += 30
             threat_indicators.append("Untrusted External Domain Reference")
 
-    # File Attachment / Downloaded Ingress Dropper Check
     text_without_urls = re.sub(r'https?://[^\s<>"]+|www\.[^\s<>"]+', '', text)
     file_matches = re.findall(r'[\w-]+\.(?:apk|exe|scr|vbs|bat|ps1|hta|iso|dll|zip|xlsm|jar)', text_without_urls, re.IGNORECASE)
     
@@ -202,7 +198,7 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
         "threat_score": final_score,
         "classification": classification,
         "identified_platforms": detected_platforms,
-        "detailed_indicators": threat_indicators if threat_indicators else ["No suspicious indicators found across analyzed social media signatures."],
+        "detailed_indicators": threat_indicators if threat_indicators else ["No suspicious indicators found."],
         "blockchain_proof": {
             "leaf_hash": ingest_result["leaf_hash"],
             "on_chain_merkle_root": ingest_result["merkle_root"]
@@ -216,7 +212,7 @@ async def deep_forensics_scan(payload: Dict[str, Any]):
 
 @router.post("/scan/email")
 async def scan_email(payload: Dict[str, Any]):
-    raw = f"From: {payload.get('sender','')} Subject: {payload.get('subject','')} {payload.get('body','')}"
+    raw = f"From: {payload.get('sender','')} Subject: {payload.get('subject','')} Body: {payload.get('body','')}"
     atts = payload.get("attachments", [])
     file_att = atts[0] if isinstance(atts, list) and len(atts) > 0 else None
     return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=raw, file_attachment=file_att))
