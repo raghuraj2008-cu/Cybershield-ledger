@@ -6,7 +6,7 @@ import math
 import os
 import urllib.parse
 from datetime import datetime
-from fastapi import APIRouter
+from fastapi import APIRouter, Request
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import List, Optional, Dict, Any
@@ -206,20 +206,26 @@ async def auto_omni_threat_scan(payload: AutoOmniScanPayload):
         "soar_recommendation": "ACTIVE_QUARANTINE_AND_BLOCK" if is_threat else "ALLOW_TRAFFIC"
     }
 
-@router.post("/scan/deep-forensics")
-async def deep_forensics_scan(payload: Dict[str, Any]):
-    return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=payload.get("file_name", ""), file_attachment=payload.get("file_name", "")))
-
 @router.post("/scan/email")
 async def scan_email(payload: Dict[str, Any]):
-    raw = f"From: {payload.get('sender','')} Subject: {payload.get('subject','')} Body: {payload.get('body','')}"
+    sender = str(payload.get("sender", ""))
+    subject = str(payload.get("subject", ""))
+    body = str(payload.get("body", ""))
+    raw = f"From: {sender} Subject: {subject} Body: {body}"
     atts = payload.get("attachments", [])
     file_att = atts[0] if isinstance(atts, list) and len(atts) > 0 else None
     return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=raw, file_attachment=file_att))
 
 @router.post("/scan/social-message")
 async def scan_social_threat(payload: Dict[str, Any]):
-    return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=payload.get("message_text", ""), file_attachment=payload.get("media_name", None)))
+    msg = str(payload.get("message_text", ""))
+    media = payload.get("media_name", None)
+    return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=msg, file_attachment=media))
+
+@router.post("/scan/deep-forensics")
+async def deep_forensics_scan(payload: Dict[str, Any]):
+    fname = str(payload.get("file_name", ""))
+    return await auto_omni_threat_scan(AutoOmniScanPayload(raw_input=fname, file_attachment=fname))
 
 @router.get("/logs")
 async def get_logs():
